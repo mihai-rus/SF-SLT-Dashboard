@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>SLT Dashboard - Technical Lead Scope</label>
+    <description>Assign to Technical Leads. The SLT Dashboard will show all open cases for agents in their direct team (one level down in the role hierarchy).</description>
+    <hasActivationRequired>false</hasActivationRequired>
+    <customPermissions>
+        <enabled>true</enabled>
+        <name>SLT_Scope_Team</name>
+    </customPermissions>
+</PermissionSet>

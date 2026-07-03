@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>SLT Dashboard - Director Scope</label>
+    <description>Assign to Directors. The SLT Dashboard will show all open cases across the entire organisation.</description>
+    <hasActivationRequired>false</hasActivationRequired>
+    <customPermissions>
+        <enabled>true</enabled>
+        <name>SLT_Scope_All</name>
+    </customPermissions>
+</PermissionSet>

@@ -1,0 +1,160 @@
+<template>
+    <div class="slt-dashboard">
+
+        <!-- Header -->
+        <div class="dashboard-header">
+            <div>
+                <h1 class="dashboard-title">SF SLT Dashboard</h1>
+                <template lwc:if={scopeLabel}>
+                    <span class="scope-label">Viewing: {scopeLabel}</span>
+                </template>
+            </div>
+            <span class="refresh-note" aria-live="polite">Auto-refreshes every 30 s</span>
+        </div>
+
+        <!-- Summary cards -->
+        <div class="summary-cards" role="region" aria-label="Case summary">
+            <div class="summary-card">
+                <span class="card-count" aria-label={ariaLabelTotal}>{totalCount}</span>
+                <span class="card-label">Total Active</span>
+            </div>
+            <div class="summary-card card-red">
+                <span class="card-count" aria-label={ariaLabelRed}>{redCount}</span>
+                <span class="card-label">Critical</span>
+            </div>
+            <div class="summary-card card-amber">
+                <span class="card-count" aria-label={ariaLabelAmber}>{amberCount}</span>
+                <span class="card-label">At Risk</span>
+            </div>
+            <div class="summary-card card-green">
+                <span class="card-count" aria-label={ariaLabelGreen}>{greenCount}</span>
+                <span class="card-label">On Track</span>
+            </div>
+        </div>
+
+        <!-- Toolbar: filter buttons + column picker -->
+        <div class="toolbar">
+            <div class="filter-bar" role="group" aria-label="Filter cases by RAG status">
+                <button class={allFilterClass}   data-filter="All"   onclick={handleFilterClick}>All</button>
+                <button class={redFilterClass}   data-filter="Red"   onclick={handleFilterClick}>Critical</button>
+                <button class={amberFilterClass} data-filter="Amber" onclick={handleFilterClick}>At Risk</button>
+                <button class={greenFilterClass} data-filter="Green" onclick={handleFilterClick}>On Track</button>
+            </div>
+
+            <div class="col-picker-wrap">
+                <button class="col-picker-btn" onclick={toggleColumnPicker}
+                        aria-expanded={showColumnPicker}>
+                    Columns &#9662;
+                </button>
+                <template lwc:if={showColumnPicker}>
+                    <div class="col-picker-dropdown" role="menu">
+                        <template for:each={columns} for:item="col">
+                            <label key={col.key} class="col-picker-item">
+                                <input type="checkbox"
+                                       data-key={col.key}
+                                       checked={col.visible}
+                                       onchange={handleColumnToggle} />
+                                {col.label}
+                            </label>
+                        </template>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <template lwc:if={isLoading}>
+            <div class="spinner-wrap">
+                <lightning-spinner alternative-text="Loading cases" size="medium"></lightning-spinner>
+            </div>
+        </template>
+
+        <!-- Error -->
+        <template lwc:elseif={error}>
+            <div class="state-box error-state" role="alert">
+                <p>Unable to load cases: {error}</p>
+                <p>Please refresh the page or contact your administrator.</p>
+            </div>
+        </template>
+
+        <!-- Data -->
+        <template lwc:else>
+
+            <template lwc:if={hasResults}>
+                <div class="table-wrap">
+                    <table class="slt-table"
+                           aria-label="SLT RAG Status — Active Cases"
+                           aria-rowcount={filteredCount}>
+                        <thead>
+                            <tr>
+                                <th lwc:if={showCaseNumber}     scope="col" class={thCaseNumber}     data-sort="caseNumber"     onclick={handleSortClick}>Case #</th>
+                                <th lwc:if={showSubject}        scope="col" class={thSubject}        data-sort="subject"        onclick={handleSortClick}>Subject</th>
+                                <th lwc:if={showOwnerName}      scope="col" class={thOwnerName}      data-sort="ownerName"      onclick={handleSortClick}>Owner</th>
+                                <th lwc:if={showStatus}         scope="col" class={thStatus}         data-sort="status"         onclick={handleSortClick}>Status</th>
+                                <th lwc:if={showSeverity}       scope="col" class={thSeverity}       data-sort="severity"       onclick={handleSortClick}>Severity</th>
+                                <th lwc:if={showMilestoneName}  scope="col" class={thMilestoneName}  data-sort="milestoneName"  onclick={handleSortClick}>Milestone Name</th>
+                                <th lwc:if={showTargetDate}     scope="col" class={thTargetDate}     data-sort="targetDate"     onclick={handleSortClick}>Target Date</th>
+                                <th lwc:if={showTimeRemaining}  scope="col" class={thTimeRemaining}  data-sort="timeRemaining"  onclick={handleSortClick}>Time Remaining</th>
+                                <th lwc:if={showProgressBar}    scope="col" class={thProgressBar}    data-sort="progressBar"    onclick={handleSortClick}>Progress</th>
+                                <th lwc:if={showIsViolated}     scope="col" class={thIsViolated}     data-sort="isViolated"     onclick={handleSortClick}>Violated</th>
+                                <th lwc:if={showCompletionDate} scope="col" class={thCompletionDate} data-sort="completionDate" onclick={handleSortClick}>Completion Date</th>
+                                <th lwc:if={showRagStatus}      scope="col" class={thRagStatus}      data-sort="ragStatus"      onclick={handleSortClick}>RAG Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template for:each={filteredCases} for:item="c">
+                                <tr key={c.Id}>
+                                    <td lwc:if={showCaseNumber}>
+                                        <a href={c.recordUrl} aria-label={c.ariaLinkLabel}>{c.caseNumber}</a>
+                                    </td>
+                                    <td lwc:if={showSubject} class="col-subject">{c.subject}</td>
+                                    <td lwc:if={showOwnerName}>{c.ownerName}</td>
+                                    <td lwc:if={showStatus}>{c.status}</td>
+                                    <td lwc:if={showSeverity}>
+                                        <span class={c.severityClass}>{c.severity}</span>
+                                    </td>
+                                    <td lwc:if={showMilestoneName}>{c.milestoneName}</td>
+                                    <td lwc:if={showTargetDate}>{c.targetDateDisplay}</td>
+                                    <td lwc:if={showTimeRemaining}>
+                                        <span class={c.timeClass}>{c.timeDisplay}</span>
+                                    </td>
+                                    <td lwc:if={showProgressBar}>
+                                        <div class="progress-track"
+                                             role="progressbar"
+                                             aria-valuenow={c.progressPct}
+                                             aria-valuemin="0"
+                                             aria-valuemax="100">
+                                            <div class="progress-fill" style={c.progressStyle}></div>
+                                        </div>
+                                        <span class="progress-label">{c.progressPct}%</span>
+                                    </td>
+                                    <td lwc:if={showIsViolated}>
+                                        <span class={c.isViolatedClass}>{c.isViolatedLabel}</span>
+                                    </td>
+                                    <td lwc:if={showCompletionDate}>{c.completionDateDisplay}</td>
+                                    <td lwc:if={showRagStatus}>
+                                        <span class={c.ragBadgeClass} aria-label={c.ariaRagLabel}>
+                                            <span class="rag-dot" aria-hidden="true"></span>
+                                            {c.ragLabel}
+                                        </span>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </template>
+
+            <!-- Empty state -->
+            <template lwc:else>
+                <div class="state-box empty-state">
+                    <p class="empty-icon" aria-hidden="true">&#10003;</p>
+                    <p class="empty-heading">No cases match this filter</p>
+                    <p>Try selecting a different RAG status above, or check back shortly.</p>
+                </div>
+            </template>
+
+        </template>
+
+    </div>
+</template>

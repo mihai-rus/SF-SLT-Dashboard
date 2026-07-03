@@ -1,0 +1,21 @@
+.DS_Store
+.sf/
+.sfdx/
+node_modules/
+**/__MACOSX/
+*.snap
+.eslintrc.json
+.prettierrc
+jest.config.js
+
+# Standard Salesforce quick actions retrieved from org (not owned by this project)
+force-app/main/default/quickActions/Case.CloseCaseLightning.quickAction-meta.xml
+force-app/main/default/quickActions/Case.LogACall.quickAction-meta.xml
+force-app/main/default/quickActions/Case.NewChildCase.quickAction-meta.xml
+force-app/main/default/quickActions/Case.SendEmail.quickAction-meta.xml
+force-app/main/default/quickActions/CollaborationGroup.*
+force-app/main/default/quickActions/FeedItem.*
+force-app/main/default/quickActions/LogACall.quickAction-meta.xml
+force-app/main/default/quickActions/New*.quickAction-meta.xml
+force-app/main/default/quickActions/SendEmail.quickAction-meta.xml
+force-app/main/default/quickActions/Task.*

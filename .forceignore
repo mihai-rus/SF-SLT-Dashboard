@@ -1,0 +1,8 @@
+.forceignore
+**/.gitignore
+**/.prettierrc
+**/*.snap
+**/jest.config.js
+**/.eslintrc.json
+**/node_modules
+**/.DS_Store

@@ -1,0 +1,10 @@
+{
+  "orgName": "SLT RAG Dashboard Dev",
+  "edition": "Developer",
+  "features": [],
+  "settings": {
+    "lightningExperienceSettings": {
+      "enableS1DesktopEnabled": true
+    }
+  }
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>SLT_RAG_Status__c</fullName>
+    <label>SLT RAG Status</label>
+    <type>Text</type>
+    <externalId>false</externalId>
+    <formula>IF(Hours_Remaining__c &lt;= 0, "Red",
+IF(Hours_Remaining__c &lt; 1, "Red",
+IF(Hours_Remaining__c &lt; (SLT_Target_Hours__c * 0.4), "Amber",
+"Green")))</formula>
+    <formulaTreatBlanksAs>BlankAsZero</formulaTreatBlanksAs>
+</CustomField>
