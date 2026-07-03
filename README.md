@@ -493,3 +493,50 @@ If a user is accidentally assigned more than one scope set, the highest scope wi
 ### Existing RAG_Status__c field
 
 This org has a separate `RAG_Status__c` field managed by an unrelated AI Case Triage system. This dashboard uses `SLT_RAG_Status__c` — a completely separate formula field. The two coexist independently and do not interact.
+
+---
+
+## 15. Custom Metadata Created (Summary)
+
+Everything below is custom-built for this project — none of it exists in a Salesforce org by default. Standard objects/fields used (Case, EmailMessage, CaseMilestone, Priority, Status, OwnerId, CreatedDate) are **not** listed here.
+
+### Custom fields on Case (8)
+
+| Field API Name | Type | Purpose |
+|---|---|---|
+| `Severity__c` | Picklist (S1/S2/S3) | Set by flow from `Priority` on case creation |
+| `Milestone_Type__c` | Picklist (First Response/Update/Resolution) | Tracks current SLT phase |
+| `First_Response_Date__c` | DateTime | Stamped on first outbound email |
+| `Last_Update_Date__c` | DateTime | Stamped on every outbound email |
+| `SLT_Target_Hours__c` | Formula (Number) | Target hours for current phase |
+| `Hours_Elapsed__c` | Formula (Number) | Hours since current phase started |
+| `Hours_Remaining__c` | Formula (Number) | Target minus elapsed |
+| `SLT_RAG_Status__c` | Formula (Text) | Red/Amber/Green |
+
+### Custom Permissions (4)
+
+`SLT_Scope_All`, `SLT_Scope_Org`, `SLT_Scope_Team`, `SLT_Scope_Own`
+
+### Permission Sets (5)
+
+`SLTDashboardAccess` (base access), `SLTScope_All`, `SLTScope_Org`, `SLTScope_Team`, `SLTScope_Own`
+
+### Apex (3)
+
+`SLTDashboardController.cls`, `SLTDashboardControllerTest.cls`, `SLTEmailMessageTriggerTest.cls`
+
+### Apex Trigger (1)
+
+`SLTEmailMessageTrigger` (after insert on EmailMessage)
+
+### Flows (2)
+
+`Case_Set_SLT_Fields_On_Create` (Before Save, Create), `Case_Update_Milestone_On_First_Response` (Before Save, Update)
+
+### Lightning Web Component (1)
+
+`sfSltDashboard`
+
+### Not custom (for clarity)
+
+`CaseMilestone` and its fields (`TargetDate`, `CompletionDate`, `IsViolated`, `MilestoneType.Name`) are standard Salesforce Entitlement Milestone objects/fields, used but not created by this project.

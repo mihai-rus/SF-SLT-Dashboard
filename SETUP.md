@@ -322,3 +322,46 @@ sf apex run test \
   --wait 10 \
   --result-format human
 ```
+
+---
+
+## Appendix — Custom Metadata Created (Summary)
+
+Reference list of everything custom-built and deployed by this project, regardless of type. Standard Salesforce objects/fields (Case, EmailMessage, CaseMilestone, Priority, Status, OwnerId, CreatedDate) are **not** listed here.
+
+### Custom fields on Case (8)
+
+| Field API Name | Type | Purpose |
+|---|---|---|
+| `Severity__c` | Picklist (S1/S2/S3) | Set by flow from `Priority` on case creation |
+| `Milestone_Type__c` | Picklist (First Response/Update/Resolution) | Tracks current SLT phase |
+| `First_Response_Date__c` | DateTime | Stamped on first outbound email |
+| `Last_Update_Date__c` | DateTime | Stamped on every outbound email |
+| `SLT_Target_Hours__c` | Formula (Number) | Target hours for current phase |
+| `Hours_Elapsed__c` | Formula (Number) | Hours since current phase started |
+| `Hours_Remaining__c` | Formula (Number) | Target minus elapsed |
+| `SLT_RAG_Status__c` | Formula (Text) | Red/Amber/Green |
+
+### Custom Permissions (4)
+
+`SLT_Scope_All`, `SLT_Scope_Org`, `SLT_Scope_Team`, `SLT_Scope_Own`
+
+### Permission Sets (5)
+
+`SLTDashboardAccess` (base access), `SLTScope_All`, `SLTScope_Org`, `SLTScope_Team`, `SLTScope_Own`
+
+### Apex (3 classes + 1 trigger)
+
+`SLTDashboardController.cls`, `SLTDashboardControllerTest.cls`, `SLTEmailMessageTriggerTest.cls`, `SLTEmailMessageTrigger.trigger`
+
+### Flows (2)
+
+`Case_Set_SLT_Fields_On_Create`, `Case_Update_Milestone_On_First_Response`
+
+### Lightning Web Component (1)
+
+`sfSltDashboard`
+
+### Not custom (for clarity)
+
+`CaseMilestone` and its fields are standard Salesforce Entitlement Milestone objects, used but not created by this project.

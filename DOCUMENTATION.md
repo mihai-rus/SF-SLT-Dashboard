@@ -395,3 +395,50 @@ Setting the LWC's `ownerId` property in Lightning App Builder pins the dashboard
 - **Inbound-only cases** — if no outbound email is ever sent, the trigger never fires and the case stays in Phase 1, counting from creation against the first-response target.
 - **Stale browser cache** — after a new LWC deploy, clear site data / use incognito (see Part 3).
 - **Separate `RAG_Status__c` field** — this dashboard uses `SLT_RAG_Status__c` only; the unrelated AI Case Triage `RAG_Status__c` field coexists independently.
+
+---
+
+## 11. Custom Metadata Created (Summary)
+
+Consolidated list of everything custom-built for this project, regardless of type. Standard Salesforce objects/fields used as-is (Case, EmailMessage, CaseMilestone, Priority, Status, OwnerId, CreatedDate) are **not** listed here.
+
+### Custom fields on Case (8)
+
+| Field API Name | Type | Purpose |
+|---|---|---|
+| `Severity__c` | Picklist (S1/S2/S3) | Set by flow from `Priority` on case creation |
+| `Milestone_Type__c` | Picklist (First Response/Update/Resolution) | Tracks current SLT phase |
+| `First_Response_Date__c` | DateTime | Stamped on first outbound email |
+| `Last_Update_Date__c` | DateTime | Stamped on every outbound email |
+| `SLT_Target_Hours__c` | Formula (Number) | Target hours for current phase |
+| `Hours_Elapsed__c` | Formula (Number) | Hours since current phase started |
+| `Hours_Remaining__c` | Formula (Number) | Target minus elapsed |
+| `SLT_RAG_Status__c` | Formula (Text) | Red/Amber/Green |
+
+### Custom Permissions (4)
+
+`SLT_Scope_All`, `SLT_Scope_Org`, `SLT_Scope_Team`, `SLT_Scope_Own` — checked via `FeatureManagement.checkPermission()` in `SLTDashboardController`.
+
+### Permission Sets (5)
+
+`SLTDashboardAccess` (base access — 8 fields + controller execute access), `SLTScope_All`, `SLTScope_Org`, `SLTScope_Team`, `SLTScope_Own`.
+
+### Apex classes (3)
+
+`SLTDashboardController.cls`, `SLTDashboardControllerTest.cls`, `SLTEmailMessageTriggerTest.cls`
+
+### Apex Trigger (1)
+
+`SLTEmailMessageTrigger.trigger` — after insert on EmailMessage
+
+### Flows (2)
+
+`Case_Set_SLT_Fields_On_Create.flow-meta.xml` (Before Save, Create), `Case_Update_Milestone_On_First_Response.flow-meta.xml` (Before Save, Update)
+
+### Lightning Web Component (1)
+
+`sfSltDashboard` (exposed to App Page, Home Page, Case Record Page, User Record Page)
+
+### Not custom (for clarity)
+
+`CaseMilestone` and its fields (`TargetDate`, `CompletionDate`, `IsViolated`, `MilestoneType.Name`) are standard Salesforce Entitlement Milestone objects, consumed but not created by this project.
