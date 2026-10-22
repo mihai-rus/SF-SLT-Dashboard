@@ -43,7 +43,6 @@ This deploys in one command:
 - Custom Labels for the scope names
 - LWC dashboard component
 - Permission sets (base access + 4 scope sets) and custom permissions
-- The two legacy Flows (inactive), `Milestone_Type__c` and the legacy formula fields (until removed — see [Removing the legacy formula fields and Flows](#removing-the-legacy-formula-fields-and-flows))
 
 ### 4. Run the tests
 
@@ -166,7 +165,7 @@ A user should only have one scope set; if they have several, the highest wins (`
 
 ### 6. Add SLT fields to the Case page layout (optional)
 
-**Setup → Object Manager → Case → Page Layouts** → add **Severity**, **First Response Date** and **Last Update Date**. (Do not add the legacy formula fields — they are being removed.)
+**Setup → Object Manager → Case → Page Layouts** → add **Severity**, **First Response Date** and **Last Update Date**.
 
 ### 7. Know the limits
 
@@ -201,20 +200,18 @@ SLT targets, mappings and thresholds are **not** deployed changes — edit them 
 
 ---
 
-## Removing the legacy formula fields and Flows
+## Upgrading an org that ran the original version
 
-The original version computed SLTs with four Case formula fields, set Severity and the phase with two Flows, and tracked the phase in `Milestone_Type__c`. Nothing uses them any more. They are removed in two destructive passes:
+The original version computed SLTs with four Case formula fields, set Severity and the phase with two Flows, and tracked the phase in `Milestone_Type__c`. These are no longer part of the project. An org that had the original version installed still contains them; remove them in two destructive passes:
 
 | Pass | Manifest | Components |
 |---|---|---|
 | 1 | `manifest/destructiveChanges.xml` | Formula fields `SLT_RAG_Status__c`, `Hours_Remaining__c`, `SLT_Target_Hours__c`, `Hours_Elapsed__c`; Flows `Case_Set_SLT_Fields_On_Create`, `Case_Update_Milestone_On_First_Response` |
 | 2 | `manifest/destructiveChanges-pass2.xml` | `Milestone_Type__c` (referenced by the Flow versions, so only removable after pass 1) |
 
-**Do this before the first managed-package release** — components are much harder to remove once they have shipped in a managed package.
-
 ### Order of operations
 
-1. **Deploy the new version first** and confirm the dashboard works. `SLTCaseTrigger` must be active — it replaces the Severity Flow. `SLTDashboardAccess` in this repository no longer grants the legacy fields.
+1. **Deploy the new version first** (`sf project deploy start --source-dir force-app`) and confirm the dashboard works. `SLTCaseTrigger` must be active — it replaces the Severity Flow.
 2. **Deactivate both Flows.** Deploying a Flow file with `Obsolete` status does not deactivate the running version; set the active version to 0 instead:
    ```bash
    sf project deploy start --metadata-dir manifest/deactivate-flows --target-org YOUR_ORG_ALIAS
@@ -240,21 +237,19 @@ The original version computed SLTs with four Case formula fields, set Severity a
      --target-org YOUR_ORG_ALIAS --dry-run
    # then the same command without --dry-run
    ```
-6. **Delete the source files** — the five field files under `objects/Case/fields/` and both files in `flows/` — and commit, so the next `--source-dir force-app` deploy does not recreate them.
-7. *(Optional)* Erase the fields permanently: **Setup → Object Manager → Case → Fields & Relationships → Deleted Fields → Erase**. Deleted fields are otherwise kept for 15 days and count toward the field limit.
+6. *(Optional)* Erase the fields permanently: **Setup → Object Manager → Case → Fields & Relationships → Deleted Fields → Erase**. Deleted fields are otherwise kept for 15 days and count toward the field limit.
 
 ## Appendix — Custom Metadata Created (Summary)
 
 | Kind | Items |
 |---|---|
 | Custom Metadata Types | `SLT_Rule__mdt` (6 records), `SLT_Priority_Map__mdt` (3), `SLT_Setting__mdt` (1) — all fields subscriber-editable |
-| Case fields | `Severity__c`, `First_Response_Date__c`, `Last_Update_Date__c`; legacy `Milestone_Type__c` and 4 formula fields (to be removed) |
+| Case fields | `Severity__c`, `First_Response_Date__c`, `Last_Update_Date__c` |
 | Apex classes | `SLTRuleService`, `SLTDashboardController`, `SLTCaseTriggerHandler`, `SLTTestFactory`, `SLTRuleServiceTest`, `SLTDashboardControllerTest`, `SLTCaseTriggerHandlerTest`, `SLTEmailMessageTriggerTest` |
 | Apex triggers | `SLTCaseTrigger` (Case, before insert), `SLTEmailMessageTrigger` (EmailMessage, after insert) |
 | Custom Labels | `SLT_Scope_Label_Filtered`, `SLT_Scope_Label_All`, `SLT_Scope_Label_Org`, `SLT_Scope_Label_Team`, `SLT_Scope_Label_Own` |
 | Custom Permissions | `SLT_Scope_All`, `SLT_Scope_Org`, `SLT_Scope_Team`, `SLT_Scope_Own` |
 | Permission Sets | `SLTDashboardAccess`, `SLTScope_All`, `SLTScope_Org`, `SLTScope_Team`, `SLTScope_Own` |
 | LWC | `sfSltDashboard` |
-| Legacy Flows (to be removed) | `Case_Set_SLT_Fields_On_Create`, `Case_Update_Milestone_On_First_Response` |
 
 `CaseMilestone` and `BusinessHours` are standard Salesforce objects, used but not created by this project.

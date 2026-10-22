@@ -183,7 +183,7 @@ Add the values to the Case **Severity** picklist, create `SLT_Rule__mdt` records
 | `SLTCaseTrigger` (before insert on Case) | New case with blank Severity | Sets `Severity__c` from Priority using `SLT_Priority_Map__mdt`; only writes values present in the Severity picklist; a manually set Severity is kept |
 | `SLTEmailMessageTrigger` (after insert on EmailMessage) | Outbound email on a case | Stamps `First_Response_Date__c` (first time) and `Last_Update_Date__c` (always) |
 
-The two legacy Flows (`Case_Set_SLT_Fields_On_Create`, `Case_Update_Milestone_On_First_Response`) are superseded and are removed in the cleanup step described in [SETUP.md](./SETUP.md#removing-the-legacy-formula-fields-and-flows).
+The original version's two Flows, four formula fields and `Milestone_Type__c` have been removed. Orgs that still have them: see [SETUP.md](./SETUP.md#upgrading-an-org-that-ran-the-original-version).
 
 ---
 
@@ -297,13 +297,12 @@ sf apex run test \
 | Kind | Items |
 |---|---|
 | Custom Metadata Types (3) | `SLT_Rule__mdt` (6 records), `SLT_Priority_Map__mdt` (3), `SLT_Setting__mdt` (1: Default) |
-| Case fields | `Severity__c`, `First_Response_Date__c`, `Last_Update_Date__c`; legacy `Milestone_Type__c` and formula fields `SLT_Target_Hours__c`, `Hours_Elapsed__c`, `Hours_Remaining__c`, `SLT_RAG_Status__c` (to be removed) |
+| Case fields (3) | `Severity__c`, `First_Response_Date__c`, `Last_Update_Date__c` |
 | Apex classes (8) | `SLTRuleService`, `SLTDashboardController`, `SLTCaseTriggerHandler`, `SLTTestFactory` + 4 test classes |
 | Apex triggers (2) | `SLTCaseTrigger`, `SLTEmailMessageTrigger` |
 | Custom Labels (5) | `SLT_Scope_Label_Filtered`, `_All`, `_Org`, `_Team`, `_Own` |
 | Custom Permissions (4) | `SLT_Scope_All`, `SLT_Scope_Org`, `SLT_Scope_Team`, `SLT_Scope_Own` |
 | Permission Sets (5) | `SLTDashboardAccess`, `SLTScope_All`, `SLTScope_Org`, `SLTScope_Team`, `SLTScope_Own` |
 | LWC (1) | `sfSltDashboard` |
-| Legacy Flows (2, to be removed) | `Case_Set_SLT_Fields_On_Create`, `Case_Update_Milestone_On_First_Response` |
 
 `CaseMilestone` and `BusinessHours` are standard Salesforce objects, used but not created by this project.
