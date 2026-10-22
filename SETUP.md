@@ -6,11 +6,11 @@ Complete instructions for deploying the SF SLT Dashboard to a Salesforce org and
 
 ## Prerequisites
 
-Before you begin, make sure you have the following installed:
-
 - **Salesforce CLI** — [download here](https://developer.salesforce.com/tools/salesforcecli)
 - **Node.js** — required by the Salesforce CLI
 - **Git**
+- For Manager / Technical Lead scopes: a configured **Role hierarchy**
+- Optional: **Entitlement Management** (only if you want Case Milestones to define SLT windows)
 
 ---
 
@@ -27,12 +27,7 @@ cd SF-SLT-Dashboard
 
 ```bash
 sf org login web --alias YOUR_ORG_ALIAS
-```
-
-A browser window will open. Log in with your Salesforce credentials. Once done, verify the connection:
-
-```bash
-sf org display --target-org YOUR_ORG_ALIAS
+sf org display --target-org YOUR_ORG_ALIAS   # verify
 ```
 
 ### 3. Deploy all metadata
@@ -41,220 +36,142 @@ sf org display --target-org YOUR_ORG_ALIAS
 sf project deploy start --source-dir force-app --target-org YOUR_ORG_ALIAS
 ```
 
-This deploys everything in one command:
-- Custom fields and formula fields on Case
-- Automation flows
-- Apex trigger and controller
+This deploys in one command:
+- Custom Metadata Types `SLT_Rule__mdt`, `SLT_Priority_Map__mdt`, `SLT_Setting__mdt` with their default records
+- Case custom fields
+- Apex classes (`SLTRuleService`, `SLTDashboardController`, `SLTCaseTriggerHandler`) and triggers (`SLTCaseTrigger`, `SLTEmailMessageTrigger`)
+- Custom Labels for the scope names
 - LWC dashboard component
-- Permission sets (base access + all 4 scope sets)
-- Custom permissions (scope definitions)
+- Permission sets (base access + 4 scope sets) and custom permissions
+- The two legacy Flows and legacy formula fields (until removed — see [Removing the legacy formula fields and Flows](#removing-the-legacy-formula-fields-and-flows))
 
 ### 4. Run the tests
 
-Confirm everything deployed cleanly before proceeding:
-
 ```bash
 sf apex run test \
+  --class-names SLTRuleServiceTest \
   --class-names SLTDashboardControllerTest \
+  --class-names SLTCaseTriggerHandlerTest \
   --class-names SLTEmailMessageTriggerTest \
   --target-org YOUR_ORG_ALIAS \
-  --wait 10 \
+  --wait 20 \
+  --code-coverage \
   --result-format human
 ```
 
-All tests should pass. If any fail, do not proceed until resolved.
+All tests must pass. The tests inject their own SLT configuration, so they pass regardless of how the SLT metadata records are configured in the org. One test inserts 1,500 cases to measure CPU and takes around 20 seconds.
 
-### 5. Backfill Severity on existing cases (if needed)
+### 5. Backfill Severity on existing cases (optional)
 
-Cases created before deployment will not have `Severity__c` populated, which means they will show as Red immediately.
+The dashboard resolves a blank `Severity__c` live from Priority, so existing cases display correctly without a backfill. Run this only if you want `Severity__c` stored on existing open cases (for reports and list views). The executing user needs the `SLTDashboardAccess` permission set.
 
-> **Before running the script:** the user executing it must have the `SLTDashboardAccess` permission set assigned, otherwise the query will fail with "No such column 'Severity__c'". Assign it first if needed:
-> ```bash
-> sf org assign permset --name SLTDashboardAccess --target-org YOUR_ORG_ALIAS
-> ```
-
-To backfill all currently open cases, go to **Developer Console** → **Debug** → **Open Execute Anonymous Window**, paste the following, and click **Execute**:
+In **Developer Console → Debug → Open Execute Anonymous Window**:
 
 ```apex
 List<Case> cases = [
     SELECT Id, Priority, Severity__c
-    FROM Case
-    WHERE Status != 'Closed'
-    AND Severity__c = null
+    FROM   Case
+    WHERE  IsClosed = false
+    AND    Severity__c = null
 ];
-
-for (Case c : cases) {
-    if      (c.Priority == 'High')   c.Severity__c = 'S1';
-    else if (c.Priority == 'Medium') c.Severity__c = 'S2';
-    else                             c.Severity__c = 'S3';
-}
-
+SLTCaseTriggerHandler.applyDefaultSeverity(cases);   // same mapping as new cases
 update cases;
 ```
+
+This works when deployed from source. In a managed-package install, package classes are not callable from anonymous Apex; set Severity with Data Loader or a list-view mass edit instead.
 
 ---
 
 ## Part 2 — Salesforce Setup
 
-### 1. Activate the flows
+### 1. Review the SLT configuration
 
-After deployment, both flows must be active.
+Go to **Setup → Custom Metadata Types** and click **Manage Records** next to each type. The defaults reproduce the original hard-coded behaviour:
 
-1. Go to **Setup** → search for **Flows** → open it
-2. Find **Case – Set SLT Fields On Create** → confirm **Status: Active**
-3. Find **Case – Switch Milestone to Update on First Response** → confirm **Status: Active**
+| Type | Default records |
+|---|---|
+| SLT Rule | S1: 30 min first response / 240 min update · S2: 120 / 1440 · S3: 1440 / 2160 · business hours off |
+| SLT Priority Map | High → S1, Medium → S2, Low → S3 (Low is the default for blank/unmapped Priority) |
+| SLT Setting (`Default`) | Red < 60 min, Amber < 40 % of window, Use Case Milestones on, Max Rows 1000 |
 
-If either shows as Inactive, click the flow name → click **Activate**.
+Change any value in place — no deployment needed. Field-by-field reference, business hours, milestone mode and adding P1–P4 severities: [DOCUMENTATION.md §5](./DOCUMENTATION.md#5-configuring-slt-rules). Editing requires **Customize Application**.
 
-### 2. Verify the Apex trigger is active
+### 2. Verify the triggers are active
 
-1. Go to **Setup** → search for **Apex Triggers** → open it
-2. Find **SLTEmailMessageTrigger** → confirm it is **Active**
-
-The trigger deploys as active by default — this is just a sanity check.
+**Setup → Apex Triggers** → confirm **SLTCaseTrigger** and **SLTEmailMessageTrigger** are **Active** (both deploy as active).
 
 ### 3. Create the dashboard Lightning page
 
-1. Go to **Setup** → search for **Lightning App Builder** → open it
-2. Click **New**
-3. Select **App Page** → click **Next**
-4. Enter a label (e.g. `SLT Dashboard`) → click **Next**
-5. Select **One Region** layout → click **Done**
-6. In the component panel on the left, search for **sfSltDashboard**
-7. Drag it onto the canvas
-8. *(Optional)* In the right-hand Properties panel, set **Filter by Owner ID** to a Salesforce User ID to pin the dashboard to one specific user's cases. Leave blank to use role-based scoping.
-9. Click **Save**
-10. Click **Activate**
-11. In the activation dialog:
-    - Set **Page Access** to **Org Default** (or assign to specific apps/profiles)
-    - Select **Desktop** as the form factor
-    - Click **Save**
+1. **Setup → Lightning App Builder → New → App Page → Next**
+2. Enter a label (e.g. `SLT Dashboard`) → **Next** → **One Region** → **Done**
+3. Drag **sfSltDashboard** onto the canvas
+4. *(Optional)* In the Properties panel:
+   - **Filter by Owner ID** — a User ID to pin the page to one user's cases (overrides scope)
+   - **Include Queue ID** — a Queue ID whose open cases are added to every viewer's scope
+5. **Save → Activate** → Page Access **Org Default** (or specific apps/profiles), **Desktop** → **Save**
 
 ### 4. Add the dashboard to your app navigation
 
-1. Go to **Setup** → **App Manager** → find the app your agents use (e.g. Service Console) → click **Edit**
-2. Go to the **Navigation Items** tab
-3. Add the Lightning page you created as a navigation item
-4. Click **Save**
-
-Agents can now find the dashboard from the app's navigation bar.
+**Setup → App Manager** → your support app → **Edit** → **Navigation Items** → add the page → **Save**.
 
 ### 5. Assign permissions to users
 
-Every user who needs access to the dashboard requires **two** permission set assignments:
+Every dashboard user needs **two** permission sets:
 
 | Permission Set | Purpose |
 |---|---|
-| `SLT Dashboard Access` | Grants access to the Apex controller and all SLT fields on Case |
-| One scope set (see below) | Controls how much data the user sees on the dashboard |
+| `SLT Dashboard Access` (`SLTDashboardAccess`) | **Required.** Read access to the SLT Case fields + Apex access |
+| One scope set (below) | How many cases the user sees |
 
-**If a user has `SLT Dashboard Access` but no scope set → dashboard shows their own cases only (safe default).**
-
-**If a user has a scope set but not `SLT Dashboard Access` → dashboard throws an error.**
-
----
+> **`SLT Dashboard Access` is mandatory.** The dashboard queries run in *user mode* (field-level security enforced — required for AppExchange security review). A user without it sees **"Unable to load cases"** instead of their cases. A user with base access but no scope set sees their own cases (safe default).
 
 #### Scope permission sets
 
-| Permission Set | Label in UI | Who to assign it to | What the dashboard shows |
+| Permission Set | Label in UI | Assign to | Dashboard shows |
 |---|---|---|---|
-| `SLTScope_All` | SLT Dashboard - Director Scope | Directors | All open cases across the entire org |
-| `SLTScope_Org` | SLT Dashboard - Manager Scope | Managers | All cases for every agent and team beneath them in the role hierarchy |
-| `SLTScope_Team` | SLT Dashboard - Technical Lead Scope | Technical Leads | All cases for agents in their direct team (one level down in the role hierarchy) |
-| `SLTScope_Own` | SLT Dashboard - Agent Scope | Agents | Only their own cases |
+| `SLTScope_All` | SLT Dashboard - Director Scope | Directors | All open cases |
+| `SLTScope_Org` | SLT Dashboard - Manager Scope | Managers | Every user beneath them in the role hierarchy |
+| `SLTScope_Team` | SLT Dashboard - Technical Lead Scope | Technical Leads | Users one level down in the role hierarchy |
+| `SLTScope_Own` | SLT Dashboard - Agent Scope | Agents | Own cases |
 
-> **Note:** `SLTScope_Org` and `SLTScope_Team` use the Salesforce role hierarchy to find subordinate users. The role hierarchy must be configured in your org for these scopes to work correctly. `SLTScope_All` and `SLTScope_Own` do not depend on roles.
+`SLTScope_Org` and `SLTScope_Team` use the role hierarchy, so those users need their **Role** set (Setup → Users → Edit → Role).
 
----
+#### Via the UI
 
-#### Assigning via the Salesforce UI
+**Setup → Users → *user* → Permission Set Assignments → Edit Assignments** → enable `SLT Dashboard Access` and the scope set → **Save**.
 
-1. Go to **Setup → Users → Users**
-2. Click the user's name
-3. Scroll to **Permission Set Assignments** → click **Edit Assignments**
-4. Move `SLT Dashboard Access` and the correct scope set to the **Enabled** column
-5. Click **Save**
+For a whole role: **Setup → Permission Sets → *set* → Manage Assignments → Add Assignments**, filter by Role, select users, **Assign**.
 
-Repeat for each user.
-
----
-
-#### Assigning via the CLI (faster for multiple users)
+#### Via the CLI
 
 ```bash
 # Director
-sf org assign permset \
-  --name SLTDashboardAccess \
-  --name SLTScope_All \
-  --on-behalf-of director@yourorg.com \
-  --target-org YOUR_ORG_ALIAS
+sf org assign permset --name SLTDashboardAccess --name SLTScope_All \
+  --on-behalf-of director@yourorg.com --target-org YOUR_ORG_ALIAS
 
 # Manager
-sf org assign permset \
-  --name SLTDashboardAccess \
-  --name SLTScope_Org \
-  --on-behalf-of manager@yourorg.com \
-  --target-org YOUR_ORG_ALIAS
+sf org assign permset --name SLTDashboardAccess --name SLTScope_Org \
+  --on-behalf-of manager@yourorg.com --target-org YOUR_ORG_ALIAS
 
 # Technical Lead
-sf org assign permset \
-  --name SLTDashboardAccess \
-  --name SLTScope_Team \
-  --on-behalf-of lead@yourorg.com \
-  --target-org YOUR_ORG_ALIAS
+sf org assign permset --name SLTDashboardAccess --name SLTScope_Team \
+  --on-behalf-of lead@yourorg.com --target-org YOUR_ORG_ALIAS
 
 # Agent
-sf org assign permset \
-  --name SLTDashboardAccess \
-  --name SLTScope_Own \
-  --on-behalf-of agent@yourorg.com \
-  --target-org YOUR_ORG_ALIAS
+sf org assign permset --name SLTDashboardAccess --name SLTScope_Own \
+  --on-behalf-of agent@yourorg.com --target-org YOUR_ORG_ALIAS
 ```
 
----
+A user should only have one scope set; if they have several, the highest wins (`All → Org → Team → Own`).
 
-#### Assigning a scope to all users in a role (bulk)
+### 6. Add SLT fields to the Case page layout (optional)
 
-1. Go to **Setup → Permission Sets → SLT Dashboard - [scope] Scope → Manage Assignments**
-2. Click **Add Assignments**
-3. Use the **Role** filter at the top to narrow the list
-4. Select all relevant users → click **Assign**
+**Setup → Object Manager → Case → Page Layouts** → add **Severity**, **First Response Date** and **Last Update Date**. (Do not add the legacy formula fields — they are being removed.)
 
-Repeat for each scope/role combination.
+### 7. Know the limits
 
----
-
-#### A user should only ever have one scope set
-
-If a user somehow has more than one, the dashboard uses the highest scope it finds, checked in this order: `All → Org → Team → Own`. To avoid confusion, audit assignments regularly via **Setup → Permission Sets → [scope set] → Manage Assignments**.
-
-### 6. Configure the role hierarchy (for Manager and TL scopes)
-
-If you are using `SLTScope_Org` (Manager) or `SLTScope_Team` (Technical Lead), users in those roles must have the correct role set in Salesforce for the hierarchy lookup to work.
-
-1. Go to **Setup → Users → Users**
-2. Click the user → click **Edit**
-3. Set the **Role** field to the appropriate role
-4. Click **Save**
-
-The role hierarchy itself (which role is the parent of which) is configured under **Setup → Roles**.
-
-> The scoping logic does not require any specific role names. It traverses whatever parent–child role structure exists in your org dynamically.
-
-### 7. Add SLT fields to the Case page layout (optional but recommended)
-
-This lets users see SLT data directly on a case record without opening the dashboard.
-
-1. Go to **Setup → Object Manager → Case → Page Layouts**
-2. Edit the layout your agents use (typically `Case Layout` or a support-specific layout)
-3. Drag the following fields into the Details section:
-   - **Severity** (`Severity__c`)
-   - **Milestone Type** (`Milestone_Type__c`)
-   - **First Response Date** (`First_Response_Date__c`)
-   - **Last Update Date** (`Last_Update_Date__c`)
-   - **Hours Remaining** (`Hours_Remaining__c`)
-   - **SLT RAG Status** (`SLT_RAG_Status__c`)
-4. Click **Save**
+- Each refresh ranks up to **10,000** open cases in the viewer's scope (oldest first by created date). With more, newer cases are not ranked and the dashboard shows "Showing the most urgent X of 10000+ open cases".
+- **Max Rows is effectively capped at 1,500.** Higher values in `SLT_Setting__mdt` behave as 1,500.
 
 ---
 
@@ -262,106 +179,73 @@ This lets users see SLT data directly on a case record without opening the dashb
 
 ### Clearing the Lightning cache
 
-Salesforce caches the compiled LWC JavaScript in the browser. After deploying a new version of the dashboard component, users may still see the old version until the cache is cleared.
+After deploying a new version of the component, users may see the old version until the browser cache is cleared: developer tools → **Application** → **Storage** → **Clear site data**, then reload — or run `localStorage.clear(); sessionStorage.clear();` in the console, or test in a private window.
 
-**If the dashboard shows an error after a fresh deploy:**
-
-1. Open the browser's developer tools (`Cmd+Option+I` on Mac / `F12` on Windows)
-2. Go to the **Application** tab
-3. Click **Storage** in the left sidebar → click **Clear site data**
-4. Reload the page
-
-Alternatively, test in an **incognito / private window** first — if it works there but not in the normal browser, it is a cache issue.
-
-You can also run this in the browser console on the Salesforce page, then reload:
-
-```javascript
-localStorage.clear(); sessionStorage.clear();
-```
-
-### Redeploying specific files
-
-To redeploy only what changed:
+### Redeploying specific parts
 
 ```bash
-# LWC component only (always clear browser cache after this)
+# LWC only (clear browser cache afterwards)
+sf project deploy start --source-dir force-app/main/default/lwc/sfSltDashboard --target-org YOUR_ORG_ALIAS
+
+# Apex classes and triggers
 sf project deploy start \
-  --source-dir force-app/main/default/lwc/sfSltDashboard \
+  --source-dir force-app/main/default/classes \
+  --source-dir force-app/main/default/triggers \
   --target-org YOUR_ORG_ALIAS
 
-# Apex controller only
-sf project deploy start \
-  --source-dir force-app/main/default/classes/SLTDashboardController.cls \
-  --target-org YOUR_ORG_ALIAS
-
-# Scope permission sets and custom permissions only
-sf project deploy start \
-  --source-dir force-app/main/default/customPermissions \
-  --source-dir force-app/main/default/permissionsets/SLTScope_All.permissionset-meta.xml \
-  --source-dir force-app/main/default/permissionsets/SLTScope_Org.permissionset-meta.xml \
-  --source-dir force-app/main/default/permissionsets/SLTScope_Team.permissionset-meta.xml \
-  --source-dir force-app/main/default/permissionsets/SLTScope_Own.permissionset-meta.xml \
-  --target-org YOUR_ORG_ALIAS
-
-# A specific formula field (e.g. after changing an SLT threshold)
-sf project deploy start \
-  --source-dir force-app/main/default/objects/Case/fields/SLT_Target_Hours__c.field-meta.xml \
-  --target-org YOUR_ORG_ALIAS
-
-# Everything at once
+# Everything
 sf project deploy start --source-dir force-app --target-org YOUR_ORG_ALIAS
 ```
 
-### Running tests after a change
+SLT targets, mappings and thresholds are **not** deployed changes — edit them in Setup (Part 2, step 1).
 
-```bash
-sf apex run test \
-  --class-names SLTDashboardControllerTest \
-  --class-names SLTEmailMessageTriggerTest \
-  --target-org YOUR_ORG_ALIAS \
-  --wait 10 \
-  --result-format human
-```
+---
+
+## Removing the legacy formula fields and Flows
+
+The original version computed SLTs with four Case formula fields and set Severity with two Flows. Nothing uses them any more, but they still exist in orgs that ran the old version (and in this repository until the cleanup is done). `manifest/destructiveChanges.xml` removes:
+
+| Component | Type |
+|---|---|
+| `Case.SLT_RAG_Status__c`, `Case.Hours_Remaining__c`, `Case.SLT_Target_Hours__c`, `Case.Hours_Elapsed__c` | Formula fields |
+| `Case_Set_SLT_Fields_On_Create`, `Case_Update_Milestone_On_First_Response` | Flows |
+
+**Do this before the first managed-package release** — components are much harder to remove once they have shipped in a managed package.
+
+### Order of operations
+
+1. **Deploy the new version first** and confirm the dashboard works (`SLTCaseTrigger` must be active — it replaces the Severity Flow).
+2. **Remove references** in source, then deploy:
+   - delete the four `fieldPermissions` entries for the formula fields from `SLTDashboardAccess.permissionset-meta.xml`;
+   - set `<status>Obsolete</status>` in both Flow files (an active Flow cannot be deleted);
+   - remove the formula fields from any page layouts, list views or reports that use them (none in the reference org).
+3. **Validate** the destructive deploy without changing anything:
+   ```bash
+   sf project deploy start --manifest manifest/package.xml \
+     --post-destructive-changes manifest/destructiveChanges.xml \
+     --target-org YOUR_ORG_ALIAS --dry-run
+   ```
+   The formula fields reference each other (`SLT_RAG_Status__c` → `Hours_Remaining__c` → `SLT_Target_Hours__c`, `Hours_Elapsed__c`). If validation reports a dependency error, run the deletion in two passes: first `SLT_RAG_Status__c` and `Hours_Remaining__c`, then the other two.
+4. **Run it** — the same command without `--dry-run`.
+5. **Delete the source files** (`objects/Case/fields/` for the four fields and both files in `flows/`) and commit, so the next `--source-dir force-app` deploy does not recreate them.
+6. *(Optional)* Erase the fields permanently: **Setup → Object Manager → Case → Fields & Relationships → Deleted Fields → Erase**. Deleted fields are otherwise kept for 15 days and count toward the field limit.
+
+After this, `Milestone_Type__c` is no longer maintained by anything; the dashboard shows the engine's phase instead. It can be removed in a later cleanup.
 
 ---
 
 ## Appendix — Custom Metadata Created (Summary)
 
-Reference list of everything custom-built and deployed by this project, regardless of type. Standard Salesforce objects/fields (Case, EmailMessage, CaseMilestone, Priority, Status, OwnerId, CreatedDate) are **not** listed here.
+| Kind | Items |
+|---|---|
+| Custom Metadata Types | `SLT_Rule__mdt` (6 records), `SLT_Priority_Map__mdt` (3), `SLT_Setting__mdt` (1) — all fields subscriber-editable |
+| Case fields | `Severity__c`, `First_Response_Date__c`, `Last_Update_Date__c`, `Milestone_Type__c` (legacy); 4 legacy formula fields (to be removed) |
+| Apex classes | `SLTRuleService`, `SLTDashboardController`, `SLTCaseTriggerHandler`, `SLTTestFactory`, `SLTRuleServiceTest`, `SLTDashboardControllerTest`, `SLTCaseTriggerHandlerTest`, `SLTEmailMessageTriggerTest` |
+| Apex triggers | `SLTCaseTrigger` (Case, before insert), `SLTEmailMessageTrigger` (EmailMessage, after insert) |
+| Custom Labels | `SLT_Scope_Label_Filtered`, `SLT_Scope_Label_All`, `SLT_Scope_Label_Org`, `SLT_Scope_Label_Team`, `SLT_Scope_Label_Own` |
+| Custom Permissions | `SLT_Scope_All`, `SLT_Scope_Org`, `SLT_Scope_Team`, `SLT_Scope_Own` |
+| Permission Sets | `SLTDashboardAccess`, `SLTScope_All`, `SLTScope_Org`, `SLTScope_Team`, `SLTScope_Own` |
+| LWC | `sfSltDashboard` |
+| Legacy Flows (to be removed) | `Case_Set_SLT_Fields_On_Create`, `Case_Update_Milestone_On_First_Response` |
 
-### Custom fields on Case (8)
-
-| Field API Name | Type | Purpose |
-|---|---|---|
-| `Severity__c` | Picklist (S1/S2/S3) | Set by flow from `Priority` on case creation |
-| `Milestone_Type__c` | Picklist (First Response/Update/Resolution) | Tracks current SLT phase |
-| `First_Response_Date__c` | DateTime | Stamped on first outbound email |
-| `Last_Update_Date__c` | DateTime | Stamped on every outbound email |
-| `SLT_Target_Hours__c` | Formula (Number) | Target hours for current phase |
-| `Hours_Elapsed__c` | Formula (Number) | Hours since current phase started |
-| `Hours_Remaining__c` | Formula (Number) | Target minus elapsed |
-| `SLT_RAG_Status__c` | Formula (Text) | Red/Amber/Green |
-
-### Custom Permissions (4)
-
-`SLT_Scope_All`, `SLT_Scope_Org`, `SLT_Scope_Team`, `SLT_Scope_Own`
-
-### Permission Sets (5)
-
-`SLTDashboardAccess` (base access), `SLTScope_All`, `SLTScope_Org`, `SLTScope_Team`, `SLTScope_Own`
-
-### Apex (3 classes + 1 trigger)
-
-`SLTDashboardController.cls`, `SLTDashboardControllerTest.cls`, `SLTEmailMessageTriggerTest.cls`, `SLTEmailMessageTrigger.trigger`
-
-### Flows (2)
-
-`Case_Set_SLT_Fields_On_Create`, `Case_Update_Milestone_On_First_Response`
-
-### Lightning Web Component (1)
-
-`sfSltDashboard`
-
-### Not custom (for clarity)
-
-`CaseMilestone` and its fields are standard Salesforce Entitlement Milestone objects, used but not created by this project.
+`CaseMilestone` and `BusinessHours` are standard Salesforce objects, used but not created by this project.

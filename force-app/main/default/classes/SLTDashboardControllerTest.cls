@@ -86,7 +86,7 @@ private class SLTDashboardControllerTest {
         Test.stopTest();
 
         System.assertNotEquals(null, result);
-        System.assertEquals('Filtered View', result.scopeLabel);
+        System.assertEquals(System.Label.SLT_Scope_Label_Filtered, result.scopeLabel);
         System.assertEquals(2, result.cases.size(), 'Closed cases must be excluded');
         for (SLTDashboardController.CaseRow row : result.cases) {
             System.assertNotEquals('Closed', row.status,
@@ -111,7 +111,7 @@ private class SLTDashboardControllerTest {
             SLTDashboardController.getActiveCases(ownerA.Id, null);
         Test.stopTest();
 
-        System.assertEquals('Filtered View', result.scopeLabel);
+        System.assertEquals(System.Label.SLT_Scope_Label_Filtered, result.scopeLabel);
         System.assertEquals(new List<String>{ 'Owner A Case' }, subjects(result));
     }
 
@@ -127,7 +127,7 @@ private class SLTDashboardControllerTest {
             SLTDashboardController.getActiveCases('', '');
         Test.stopTest();
 
-        System.assertNotEquals('Filtered View', result.scopeLabel,
+        System.assertNotEquals(System.Label.SLT_Scope_Label_Filtered, result.scopeLabel,
             'Blank ownerId should use permission-based scope, not override');
     }
 
@@ -589,7 +589,7 @@ private class SLTDashboardControllerTest {
         }
         Test.stopTest();
 
-        System.assertEquals('Your Cases', result.scopeLabel);
+        System.assertEquals(System.Label.SLT_Scope_Label_Own, result.scopeLabel);
         System.assertEquals(1, result.cases.size());
     }
 
@@ -620,7 +620,7 @@ private class SLTDashboardControllerTest {
         }
         Test.stopTest();
 
-        System.assertEquals('Your Cases', result.scopeLabel);
+        System.assertEquals(System.Label.SLT_Scope_Label_Own, result.scopeLabel);
         System.assertEquals(1, result.cases.size());
         System.assertEquals('Agent1 Case', result.cases[0].subject);
     }
@@ -655,7 +655,7 @@ private class SLTDashboardControllerTest {
         }
         Test.stopTest();
 
-        System.assertEquals('Your Team', result.scopeLabel);
+        System.assertEquals(System.Label.SLT_Scope_Label_Team, result.scopeLabel);
         System.assertEquals(3, result.cases.size(),
             'TL should see own case + both agent cases');
     }
@@ -687,7 +687,7 @@ private class SLTDashboardControllerTest {
         }
         Test.stopTest();
 
-        System.assertEquals('Your Organisation', result.scopeLabel);
+        System.assertEquals(System.Label.SLT_Scope_Label_Org, result.scopeLabel);
         System.assertEquals(2, result.cases.size(),
             'Manager should see own case + agent case');
     }
@@ -719,7 +719,7 @@ private class SLTDashboardControllerTest {
         }
         Test.stopTest();
 
-        System.assertEquals('All Cases', result.scopeLabel);
+        System.assertEquals(System.Label.SLT_Scope_Label_All, result.scopeLabel);
         System.assert(result.cases.size() >= 2,
             'Director should see all open cases in the org');
     }

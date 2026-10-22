@@ -68,7 +68,7 @@ public with sharing class SLTDashboardController {
     private static Set<Id> resolveScope(String ownerId, DashboardResult result) {
         // Admin override: pin the dashboard to a specific user regardless of permissions
         if (String.isNotBlank(ownerId)) {
-            result.scopeLabel = 'Filtered View';
+            result.scopeLabel = System.Label.SLT_Scope_Label_Filtered;
             return new Set<Id>{ ownerId };
         }
 
@@ -77,7 +77,7 @@ public with sharing class SLTDashboardController {
 
         // Director — all cases across the entire org
         if (FeatureManagement.checkPermission('SLT_Scope_All')) {
-            result.scopeLabel = 'All Cases';
+            result.scopeLabel = System.Label.SLT_Scope_Label_All;
             return null;
         }
 
@@ -87,7 +87,7 @@ public with sharing class SLTDashboardController {
                 ? getUsersInSubtree(currentRoleId)
                 : new Set<Id>();
             userIds.add(currentUserId);
-            result.scopeLabel = 'Your Organisation';
+            result.scopeLabel = System.Label.SLT_Scope_Label_Org;
             return userIds;
         }
 
@@ -97,12 +97,12 @@ public with sharing class SLTDashboardController {
                 ? getUsersInDirectSubroles(currentRoleId)
                 : new Set<Id>();
             userIds.add(currentUserId);
-            result.scopeLabel = 'Your Team';
+            result.scopeLabel = System.Label.SLT_Scope_Label_Team;
             return userIds;
         }
 
         // Agent (SLT_Scope_Own or no scope permission assigned) — own cases only
-        result.scopeLabel = 'Your Cases';
+        result.scopeLabel = System.Label.SLT_Scope_Label_Own;
         return new Set<Id>{ currentUserId };
     }
 

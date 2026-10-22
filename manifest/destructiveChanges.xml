@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  PROPOSED — not yet run. Removes the legacy formula-field SLT engine and the two
+  Flows replaced by SLTRuleService / SLTCaseTrigger. See SETUP.md, "Removing the
+  legacy formula fields and Flows", for the required order of operations.
+-->
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>Case.SLT_RAG_Status__c</members>
+        <members>Case.Hours_Remaining__c</members>
+        <members>Case.SLT_Target_Hours__c</members>
+        <members>Case.Hours_Elapsed__c</members>
+        <name>CustomField</name>
+    </types>
+    <types>
+        <members>Case_Set_SLT_Fields_On_Create</members>
+        <members>Case_Update_Milestone_On_First_Response</members>
+        <name>Flow</name>
+    </types>
+    <version>62.0</version>
+</Package>

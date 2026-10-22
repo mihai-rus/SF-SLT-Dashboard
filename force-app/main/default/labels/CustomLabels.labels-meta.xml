@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomLabels xmlns="http://soap.sforce.com/2006/04/metadata">
+    <labels>
+        <fullName>SLT_Scope_Label_Filtered</fullName>
+        <categories>SLT Dashboard</categories>
+        <language>en_US</language>
+        <protected>false</protected>
+        <shortDescription>Dashboard scope label when the App Builder Owner ID override is set</shortDescription>
+        <value>Filtered View</value>
+    </labels>
+    <labels>
+        <fullName>SLT_Scope_Label_All</fullName>
+        <categories>SLT Dashboard</categories>
+        <language>en_US</language>
+        <protected>false</protected>
+        <shortDescription>Dashboard scope label for users with SLT_Scope_All (Directors)</shortDescription>
+        <value>All Cases</value>
+    </labels>
+    <labels>
+        <fullName>SLT_Scope_Label_Org</fullName>
+        <categories>SLT Dashboard</categories>
+        <language>en_US</language>
+        <protected>false</protected>
+        <shortDescription>Dashboard scope label for users with SLT_Scope_Org (Managers)</shortDescription>
+        <value>Your Organisation</value>
+    </labels>
+    <labels>
+        <fullName>SLT_Scope_Label_Team</fullName>
+        <categories>SLT Dashboard</categories>
+        <language>en_US</language>
+        <protected>false</protected>
+        <shortDescription>Dashboard scope label for users with SLT_Scope_Team (Technical Leads)</shortDescription>
+        <value>Your Team</value>
+    </labels>
+    <labels>
+        <fullName>SLT_Scope_Label_Own</fullName>
+        <categories>SLT Dashboard</categories>
+        <language>en_US</language>
+        <protected>false</protected>
+        <shortDescription>Dashboard scope label for agents and users without a scope permission</shortDescription>
+        <value>Your Cases</value>
+    </labels>
+</CustomLabels>

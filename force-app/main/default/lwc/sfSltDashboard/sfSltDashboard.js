@@ -69,7 +69,15 @@ function severityPillStyle(hex) {
     return `background-color:${hex};color:${luminance > 0.179 ? '#080707' : '#ffffff'}`;
 }
 
-function fmtMins(mins) {
+// "Xh Ym" (or "-Xh Ym" when breached). Under an hour, live rows add seconds
+// ("42m 15s") because they tick every second.
+function fmtMins(mins, withSeconds = false) {
+    const totalSecs = Math.round(mins * 60);
+    if (withSeconds && Math.abs(totalSecs) < 3600) {
+        const sign = totalSecs < 0 ? '-' : '';
+        const abs  = Math.abs(totalSecs);
+        return sign + `${Math.floor(abs / 60)}m ${abs % 60}s`;
+    }
     const total = Math.round(mins);
     const sign  = total < 0 ? '-' : '';
     const abs   = Math.abs(total);
@@ -178,7 +186,7 @@ export default class SfSltDashboard extends LightningElement {
 
         const ragLabel    = ruleMissing ? NO_RULE_LABEL : (RAG_LABEL[rag] ?? RAG_LABEL.Green);
         const ragClass    = ruleMissing ? 'rag-none' : `rag-${(rag ?? 'Green').toLowerCase()}`;
-        const timeDisplay = remainingMins != null ? fmtMins(remainingMins) : '—';
+        const timeDisplay = remainingMins != null ? fmtMins(remainingMins, this._isLive(c)) : '—';
         const pillStyle   = severityPillStyle(c.severityColor);
 
         return {

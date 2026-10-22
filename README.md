@@ -1,6 +1,8 @@
 # SF SLT Dashboard — Salesforce LWC
 
-A Lightning Web Component that gives support agents and managers a live **Red / Amber / Green** view of every open case's SLT compliance. Each user sees only the cases relevant to their assigned scope permission. The dashboard auto-refreshes every 30 seconds and requires no manual page refresh.
+A Lightning Web Component that gives support agents and managers a live **Red / Amber / Green** view of every open case's SLT compliance. Each user sees only the cases relevant to their assigned scope. Data refreshes every 30 seconds and countdowns tick every second — no manual page refresh.
+
+Every SLT rule (targets, Priority → Severity mapping, RAG thresholds, colours, business hours) is **configuration in Setup**, not code, so the product can ship as a managed package.
 
 > **RAG** here means Red / Amber / Green — a traffic-light compliance indicator. It has nothing to do with AI or retrieval-augmented generation.
 
@@ -12,16 +14,16 @@ A Lightning Web Component that gives support agents and managers a live **Red / 
 2. [Role-based scoping](#2-role-based-scoping)
 3. [How SLT tracking works — the full lifecycle](#3-how-slt-tracking-works--the-full-lifecycle)
 4. [Tech stack and architecture](#4-tech-stack-and-architecture)
-5. [Custom fields on Case](#5-custom-fields-on-case)
-6. [SLT values — and how to change them](#6-slt-values--and-how-to-change-them)
-7. [Automation flows](#7-automation-flows)
-8. [Email trigger](#8-email-trigger)
-9. [Apex controller](#9-apex-controller)
-10. [LWC dashboard component](#10-lwc-dashboard-component)
-11. [Permission sets](#11-permission-sets)
-12. [Deploy and setup](#12-deploy-and-setup)
-13. [Configuration reference](#13-configuration-reference)
-14. [Edge cases](#14-edge-cases)
+5. [Configuring SLT rules](#5-configuring-slt-rules)
+6. [Automation](#6-automation)
+7. [Apex](#7-apex)
+8. [LWC dashboard component](#8-lwc-dashboard-component)
+9. [Permission sets](#9-permission-sets)
+10. [Limits](#10-limits)
+11. [Deploy and setup](#11-deploy-and-setup)
+12. [Configuration reference](#12-configuration-reference)
+13. [Edge cases](#13-edge-cases)
+14. [Custom Metadata Created (Summary)](#14-custom-metadata-created-summary)
 
 ---
 
@@ -30,513 +32,278 @@ A Lightning Web Component that gives support agents and managers a live **Red / 
 | Feature | Detail |
 |---|---|
 | Role-based scope | Each user automatically sees the right cases for their role — Agent, Technical Lead, Manager, or Director |
-| Scope label | Header shows "Viewing: Your Team" / "Your Organisation" / "All Cases" etc. so it is always clear what is displayed |
-| Live case table | All relevant open cases, sortable by any column |
-| 12 available columns | Case #, Subject, Owner, Status, Severity, Milestone Name, Target Date, Time Remaining, Progress, Violated, Completion Date, RAG Status |
-| Column picker | Show or hide any column via the Columns button — takes effect immediately |
-| Sortable columns | Click any column header to sort ascending; click again for descending |
-| Summary cards | Counts of Total / Critical / At Risk / On Track cases (scoped to what the user can see) |
-| RAG filter buttons | Filter the table to show only Critical, At Risk, or On Track cases |
-| Gradient progress bar | Fill bar transitions green → orange → red as the SLT deadline approaches |
-| Time remaining | Displays `Xh Ym`, or `-Xh Ym` in red when breached |
-| Violated indicator | Yes / No badge showing whether the SLT has been breached |
-| Target Date | Milestone target date/time from the CaseMilestone record |
-| Completion Date | Milestone completion date from the CaseMilestone record |
-| Auto-refresh | Reloads data every 30 seconds — no page refresh needed |
+| Scope label | Header shows "Viewing: Your Team" / "Your Organisation" / "All Cases" etc. (Custom Labels, translatable) |
+| Live case table | Most urgent open cases first, sortable by any column |
+| 13 available columns | Case #, Subject, Owner, Status, Severity, Milestone Name, Target Date, Time Remaining, Progress, Violated, Completion Date, RAG Status, Source (hidden by default) |
+| Column picker | Show or hide any column via the Columns button |
+| Summary cards | Counts of Total / Critical / At Risk / On Track cases |
+| RAG filter buttons | Filter the table to Critical, At Risk, or On Track |
+| Live countdown | Time remaining ticks every second (`42m 15s` under an hour; `Xh Ym` above), RAG badge updates as thresholds are crossed |
+| Gradient progress bar | Green → orange → red as the SLT deadline approaches |
+| Configurable severities | Severity pill colour and label come from configuration |
+| Business hours | Optional per rule — clock pauses outside working hours |
+| Entitlement milestones | Optional — an open Case Milestone can define the SLT window |
+| "No SLT rule" badge | Cases whose severity has no rule are flagged grey, never shown as Red |
+| Queue cases | Optionally include a queue's cases in the view |
 | Automatic SLT reset | Timer resets when an outbound email is sent from the case |
-| Priority mapping | New cases get Severity auto-populated from the Case Priority field |
+| Priority mapping | New cases get Severity from Priority |
 
 ### Available columns
 
 | Column | Source |
 |---|---|
-| Case # | `Case.CaseNumber` |
-| Subject | `Case.Subject` |
-| Owner | `Case.Owner.Name` |
-| Status | `Case.Status` |
-| Severity | `Case.Severity__c` |
-| Milestone Name | `CaseMilestone.MilestoneType.Name` (falls back to `Case.Milestone_Type__c`) |
-| Target Date | `CaseMilestone.TargetDate` |
-| Time Remaining | Calculated from `CaseMilestone.TargetDate − now()`, or `Hours_Remaining__c × 60` |
-| Progress | `(Hours_Elapsed__c / SLT_Target_Hours__c) × 100%` |
-| Violated | `CaseMilestone.IsViolated` (falls back to `Hours_Remaining__c ≤ 0`) |
-| Completion Date | `CaseMilestone.CompletionDate` |
-| RAG Status | `Case.SLT_RAG_Status__c` |
+| Case # / Subject / Owner / Status | Case fields |
+| Severity | Resolved severity (stored `Severity__c`, else Priority mapping); pill colour from `SLT_Rule__mdt` |
+| Milestone Name | Open `CaseMilestone` name, or the SLT phase (First Response / Update) |
+| Target Date | Open `CaseMilestone.TargetDate` (blank for rule-based rows) |
+| Time Remaining | Deadline − now |
+| Progress | Elapsed ÷ SLT window |
+| Violated | Milestone `IsViolated`, or deadline passed |
+| Completion Date | Milestone completion date (open milestones only, so normally blank) |
+| RAG Status | Red / Amber / Green from the SLT window, or "No SLT rule" |
+| Source | Rule or Milestone (hidden by default) |
 
 ---
 
 ## 2. Role-based scoping
 
-The dashboard automatically adjusts what each user sees based on a Salesforce Custom Permission assigned to them. The scope **assignment** is decoupled from the org's role hierarchy — any user can be assigned any scope regardless of their position in the org chart. However, the `Manager` and `Technical Lead` scopes still traverse the role hierarchy at runtime to find subordinate users, so those users must have their Salesforce Role set correctly.
-
-### Scope levels
-
 | Scope | Permission Set to assign | What the user sees |
 |---|---|---|
-| Director | `SLT Dashboard - Director Scope` | All open cases in the entire org |
-| Manager | `SLT Dashboard - Manager Scope` | All cases for every user and team beneath them in the role hierarchy |
-| Technical Lead | `SLT Dashboard - Technical Lead Scope` | Cases for all agents in their direct team (one level down in the role hierarchy) |
+| Director | `SLT Dashboard - Director Scope` | All open cases in the org |
+| Manager | `SLT Dashboard - Manager Scope` | Cases for every user beneath them in the role hierarchy |
+| Technical Lead | `SLT Dashboard - Technical Lead Scope` | Cases for users in direct child roles |
 | Agent | `SLT Dashboard - Agent Scope` | Only their own cases |
-| *(no scope assigned)* | — | Only their own cases (same as Agent — safe default) |
+| *(no scope assigned)* | — | Only their own cases (safe default) |
 
-### How scope is determined
+The controller checks `SLT_Scope_All → SLT_Scope_Org → SLT_Scope_Team → fallback`; the highest scope wins. Manager and Technical Lead scopes traverse the role hierarchy at runtime, so those users need a Role.
 
-When the dashboard loads it checks the logged-in user's Custom Permissions in this priority order:
+### Every user also needs `SLT Dashboard Access`
 
-1. `SLT_Scope_All` → show all cases (Director)
-2. `SLT_Scope_Org` → traverse the role hierarchy and show all cases for every user beneath (Manager)
-3. `SLT_Scope_Team` → show cases for users in direct child roles only (Technical Lead)
-4. Fallback → show own cases only (Agent or no permission)
+Queries run in **user mode** (field-level security enforced, required for AppExchange). Without the `SLTDashboardAccess` permission set a user gets "Unable to load cases". See [SETUP.md](./SETUP.md).
 
-The scope label displayed in the dashboard header ("Viewing: Your Team" etc.) reflects the active scope.
+### Admin overrides (Lightning App Builder)
 
-### Two permission sets are required per user
-
-Every user needs:
-1. **`SLT Dashboard Access`** — grants access to the Apex controller and all SLT fields on Case
-2. **One scope set** — controls how much data they see
-
-Missing either one causes an error or wrong behaviour. See [SETUP.md](./SETUP.md) for full assignment instructions.
-
-### Admin override
-
-Setting the `ownerId` property on the component in Lightning App Builder pins the dashboard to a specific user's cases for everyone who views that page, regardless of their scope permission. The header shows "Viewing: Filtered View" when this override is active.
+- **Filter by Owner ID** — pins the page to one user's cases for everyone ("Viewing: Filtered View").
+- **Include Queue ID** — adds open cases owned by that queue to each viewer's scope.
 
 ---
 
 ## 3. How SLT tracking works — the full lifecycle
 
 ### Phase 1 — Waiting for first response
-
-When a case is created, the SLT clock starts immediately from the creation timestamp. The target is the **first response SLT** for the case's severity (e.g. 30 minutes for S1). Nothing needs to happen manually.
+The clock starts at case creation against the **First Response** target for the case's severity (e.g. 30 minutes for S1).
 
 ### Phase 2 — First response given
-
-When an agent **sends an outbound email** from the case, the system automatically:
-
-1. Records the timestamp as `First_Response_Date__c` (first outbound email only)
-2. Records the same timestamp as `Last_Update_Date__c`
-3. The SLT target switches to the **update SLT** (e.g. 4 hours for S1)
-4. The elapsed clock resets to zero — the agent now has the full update window
-5. The Milestone field on the case flips from "First Response" to "Update"
+When an agent **sends an outbound email** from the case, `First_Response_Date__c` and `Last_Update_Date__c` are stamped, the target switches to the **Update** target (e.g. 4 hours for S1) and the clock restarts.
 
 ### Phase 3 — Ongoing updates
+Every subsequent outbound email re-stamps `Last_Update_Date__c` and restarts the update window.
 
-Every subsequent outbound email updates `Last_Update_Date__c` to the current time. The elapsed clock resets again, giving the agent another full update window.
+Emails sent from an external client (Outlook, Gmail, …) do not create a Salesforce `EmailMessage` and do not reset the timer.
 
-### What triggers the reset
+### RAG status (default thresholds)
 
-The reset is driven by the **Salesforce EmailMessage trigger** — it fires whenever an outbound email is sent through Salesforce. Emails sent from an external client (Outlook, Gmail, etc.) do not create an `EmailMessage` record and will not reset the timer.
-
-### Visual representation
-
-The progress bar fill grows left to right as time is consumed, using a continuous gradient:
-
-- **Green** — early on, plenty of time remaining
-- **Orange** — deadline approaching
-- **Red** — at or past the SLT deadline
-
-The RAG badge reflects the current risk level:
-
-- **Green / On track** — more than 40% of the SLT window remains
+- **Green / On track** — at least 40% of the SLT window remains
 - **Amber / At risk** — less than 40% of the window remains
-- **Red / Critical** — less than 1 hour remains, or the SLT has already been breached
+- **Red / Critical** — less than 60 minutes remain, or the SLT is breached
+- **Grey / No SLT rule** — no rule is configured for the case's severity and phase
+
+Both thresholds are configurable (`SLT_Setting__mdt`).
 
 ---
 
 ## 4. Tech stack and architecture
 
-This is a **pure Salesforce** solution — no external APIs, no scheduled jobs, no middleware.
-
 | Layer | Technology | Purpose |
 |---|---|---|
-| Data | Formula fields on Case | All RAG calculations, recalculated live at query time |
-| Data | Salesforce CaseMilestone (standard) | Target Date, Completion Date, IsViolated |
-| Automation | Record-Triggered Flows (Before Save) | Set Severity on case creation, flip Milestone on first response |
-| Automation | Apex Trigger on EmailMessage | Stamp response/update timestamps when emails are sent |
-| Backend | Apex class (`SLTDashboardController`) | Query case + milestone data; apply scope filter based on permissions |
-| Access — data | Permission Set `SLTDashboardAccess` | Read access to SLT fields and the Apex controller |
-| Access — scope | Custom Permissions + 4 scope permission sets | Determine how much data each user sees |
-| Frontend | LWC (`sfSltDashboard`) | The dashboard UI, auto-refreshes every 30 s |
-
-### Architecture diagram
+| Configuration | Custom Metadata Types | SLT rules, priority mapping, thresholds |
+| Engine | Apex `SLTRuleService` | Severity, phase, deadline, elapsed/remaining, RAG |
+| Backend | Apex `SLTDashboardController` | Scope, two-stage ranking, rows for the LWC |
+| Automation | Apex triggers on Case and EmailMessage | Stamp Severity on create; stamp response/update dates |
+| Data | Salesforce CaseMilestone (optional) | Milestone-based SLT windows |
+| Access | `SLTDashboardAccess` + 4 scope permission sets | Field access and scope |
+| Frontend | LWC `sfSltDashboard` | Dashboard UI |
 
 ```
-New Case Created
-  └── Flow: Case_Set_SLT_Fields_On_Create
-        └── Sets Severity__c (from Priority) and Milestone_Type__c = "First Response"
-
-SLT Clock Running (formula fields — no code needed)
-  ├── SLT_Target_Hours__c   — target hours for the current phase
-  ├── Hours_Elapsed__c      — hours since the current phase started
-  ├── Hours_Remaining__c    — target minus elapsed (negative = breached)
-  └── SLT_RAG_Status__c     — "Green" / "Amber" / "Red"
-
-Agent Sends Outbound Email
-  └── Trigger: SLTEmailMessageTrigger
-        ├── First email → stamps First_Response_Date__c + Last_Update_Date__c
-        ├── Subsequent emails → stamps only Last_Update_Date__c
-        └── Flow: Case_Update_Milestone_On_First_Response
-              └── Flips Milestone_Type__c "First Response" → "Update"
-
-Dashboard Loads (every 30 s)
-  └── sfSltDashboard LWC calls SLTDashboardController.getActiveCases()
-        ├── Checks Custom Permissions on the logged-in user
-        │     SLT_Scope_All   → query all cases (Director)
-        │     SLT_Scope_Org   → traverse role hierarchy → query subordinates (Manager)
-        │     SLT_Scope_Team  → query direct child role users (Technical Lead)
-        │     fallback        → query own cases only (Agent)
-        └── Returns DashboardResult { cases: List<CaseRow>, scopeLabel: String }
+Setup → Custom Metadata (SLT_Rule, SLT_Priority_Map, SLT_Setting)
+                     │
+New Case ──► SLTCaseTrigger ──► Severity__c from Priority
+Outbound email ──► SLTEmailMessageTrigger ──► First_Response / Last_Update dates
+                     │
+Dashboard (30 s) ──► SLTDashboardController.getActiveCases(ownerId, queueId)
+                       ├── scope from Custom Permissions
+                       ├── rank up to 10,000 open cases (calendar-time estimate)
+                       └── exact SLTRuleService evaluation of the most urgent
+Browser (1 s) ──► countdown + RAG for calendar-time rows
 ```
 
 ---
 
-## 5. Custom fields on Case
+## 5. Configuring SLT rules
 
-Two fields use the `SLT_` prefix (`SLT_Target_Hours__c`, `SLT_RAG_Status__c`). The remaining six use plain names. This org also has a separate `RAG_Status__c` field from an unrelated AI Case Triage project — do not confuse the two. This dashboard uses `SLT_RAG_Status__c`.
+Everything is edited in **Setup → Custom Metadata Types → *type* → Manage Records** — no code, no deployment. Full field reference: [DOCUMENTATION.md §5](./DOCUMENTATION.md#5-configuring-slt-rules).
 
-| Field API name | Type | Purpose |
-|---|---|---|
-| `Severity__c` | Picklist | Case severity: S1, S2, or S3 |
-| `Milestone_Type__c` | Picklist | Current SLT phase: First Response, Update, or Resolution |
-| `First_Response_Date__c` | DateTime | Timestamp of the first outbound email from this case |
-| `Last_Update_Date__c` | DateTime | Timestamp of the most recent outbound email from this case |
-| `SLT_Target_Hours__c` | Formula (Number) | Target hours for the current phase, based on Severity |
-| `Hours_Elapsed__c` | Formula (Number) | Hours elapsed since the current phase started |
-| `Hours_Remaining__c` | Formula (Number) | Target minus elapsed — negative = breached |
-| `SLT_RAG_Status__c` | Formula (Text) | "Red", "Amber", or "Green" |
+### Default SLT targets (`SLT_Rule__mdt`)
 
-### Formula field logic
+| Severity | First Response target | Update target | Label | Colour |
+|---|---|---|---|---|
+| S1 | 30 minutes | 4 hours (240) | Production Down | `#8E0A08` |
+| S2 | 2 hours (120) | 24 hours (1440) | Production Impaired | `#7A4600` |
+| S3 | 24 hours (1440) | 36 hours (2160) | Minor Issue | `#005FB2` |
 
-**`SLT_Target_Hours__c`:**
-```
-Before first response:   S1 → 0.5 h  |  S2 → 2 h  |  S3 → 24 h
-After first response:    S1 → 4 h    |  S2 → 24 h  |  S3 → 36 h
-```
+Targets are stored in **minutes**. To change a target, edit the record (e.g. `S1_First_Response` → Target Minutes).
 
-**`Hours_Elapsed__c`:**
-```
-No first response yet:   NOW() − CreatedDate
-First response, no update: NOW() − First_Response_Date__c
-Update sent:             NOW() − Last_Update_Date__c
-```
+### Priority → Severity (`SLT_Priority_Map__mdt`)
 
-**`SLT_RAG_Status__c`:**
-```
-Hours_Remaining__c ≤ 0                            → Red   (breached)
-Hours_Remaining__c < 1                            → Red   (< 1 hour left)
-Hours_Remaining__c < (SLT_Target_Hours__c × 0.4) → Amber (< 40% remaining)
-Otherwise                                         → Green
-```
+High → S1, Medium → S2, Low → S3 (Low is the default for blank or unmapped Priority).
 
----
+### Thresholds and options (`SLT_Setting__mdt` → `Default`)
 
-## 6. SLT values — and how to change them
-
-### Current thresholds
-
-| Severity | First Response target | Update target |
-|---|---|---|
-| S1 — Production Down | 30 minutes (0.5 h) | 4 hours |
-| S2 — Production Impaired | 2 hours | 24 hours |
-| S3 — Minor Issue | 24 hours | 36 hours |
-
-### To change SLT target hours
-
-Edit `force-app/main/default/objects/Case/fields/SLT_Target_Hours__c.field-meta.xml` and update the numbers in the `<formula>` block. All values are in hours (`0.5` = 30 minutes). Redeploy the single field after saving:
-
-```bash
-sf project deploy start \
-  --source-dir force-app/main/default/objects/Case/fields/SLT_Target_Hours__c.field-meta.xml \
-  --target-org YOUR_ORG_ALIAS
-```
-
-### To change when Amber and Red kick in
-
-Edit `force-app/main/default/objects/Case/fields/SLT_RAG_Status__c.field-meta.xml`:
-- Change `1` to adjust the absolute Red threshold (currently: go Red when less than 1 hour left)
-- Change `0.4` to adjust the Amber percentage threshold (`0.4` = 40%, `0.25` = 25%)
-
----
-
-## 7. Automation flows
-
-Both flows are **Before Save** record-triggered flows — they run as part of the save transaction with no extra DML.
-
-### `Case_Set_SLT_Fields_On_Create`
-
-Runs on every new Case creation (only if `Severity__c` is not already set). Maps `Priority` → `Severity__c` and sets `Milestone_Type__c = "First Response"`.
-
-| Priority | Severity set |
+| Setting | Default |
 |---|---|
-| High | S1 |
-| Medium | S2 |
-| Low (or blank) | S3 |
+| Red Threshold Minutes | 60 |
+| Amber Threshold Percent | 40 |
+| Use Case Milestones | on |
+| Max Rows | 1000 (effective maximum 1,500) |
 
-To change the mapping, edit the `<rules>` elements in `force-app/main/default/flows/Case_Set_SLT_Fields_On_Create.flow-meta.xml`.
+### Business hours
 
-### `Case_Update_Milestone_On_First_Response`
+Tick **Use Business Hours** on a rule; leave **Business Hours Name** blank for the org default or enter another Business Hours record's name.
 
-Runs on every Case update where `First_Response_Date__c` is not blank. Sets `Milestone_Type__c = "Update"` — a display-only change to keep the Milestone column accurate.
+### Adding P1–P4 severities
 
----
-
-## 8. Email trigger
-
-**File:** `force-app/main/default/triggers/SLTEmailMessageTrigger.trigger`
-
-Fires after any outbound `EmailMessage` is inserted where the parent is a Case.
-
-- **First outbound email:** stamps both `First_Response_Date__c` and `Last_Update_Date__c`
-- **Subsequent outbound emails:** stamps only `Last_Update_Date__c`
-
-Does not fire for inbound emails or for emails sent outside Salesforce.
-
-**Test class:** `SLTEmailMessageTriggerTest.cls`
+Add the values to the Case **Severity** picklist, create `SLT_Rule__mdt` records for each severity × phase, and repoint `SLT_Priority_Map__mdt`. Step by step: [DOCUMENTATION.md §5](./DOCUMENTATION.md#adding-p1p4-style-severities).
 
 ---
 
-## 9. Apex controller
+## 6. Automation
 
-**File:** `force-app/main/default/classes/SLTDashboardController.cls`
+| Component | When | What |
+|---|---|---|
+| `SLTCaseTrigger` (before insert on Case) | New case with blank Severity | Sets `Severity__c` from Priority using `SLT_Priority_Map__mdt`; only writes values present in the Severity picklist; a manually set Severity is kept |
+| `SLTEmailMessageTrigger` (after insert on EmailMessage) | Outbound email on a case | Stamps `First_Response_Date__c` (first time) and `Last_Update_Date__c` (always) |
 
-### `getActiveCases(String ownerId)`
-
-Returns a `DashboardResult` object containing:
-- `cases` — `List<CaseRow>`, a flat wrapper combining Case + CaseMilestone fields
-- `scopeLabel` — a human-readable string ("All Cases", "Your Organisation", "Your Team", "Your Cases", or "Filtered View")
-
-**Scope logic (checked in this exact order — first match wins):**
-
-| Priority | Condition | Cases returned | Scope label |
-|---|---|---|---|
-| 1 | `ownerId` param set in App Builder | Cases for that specific user only — overrides all permissions | Filtered View |
-| 2 | `SLT_Scope_All` permission present | All open cases in the org | All Cases |
-| 3 | `SLT_Scope_Org` permission present | Cases for all users in the role subtree beneath the current user | Your Organisation |
-| 4 | `SLT_Scope_Team` permission present | Cases for users in direct child roles of the current user's role | Your Team |
-| 5 | Fallback (no permission or `SLT_Scope_Own`) | Only the current user's cases | Your Cases |
-
-All queries exclude closed cases, order by `Hours_Remaining__c ASC` (most overdue first), and are capped at 1000 records.
-
-### CaseMilestone fallback
-
-If no `CaseMilestone` record exists for a case, the controller falls back to custom fields:
-- `milestoneName` → `Milestone_Type__c`
-- `isViolated` → `Hours_Remaining__c ≤ 0`
-- `timeRemainingMins` → `Hours_Remaining__c × 60`
-- `targetDate` / `completionDate` → null (shown as `—`)
-
-**Test class:** `SLTDashboardControllerTest.cls`
+The two legacy Flows (`Case_Set_SLT_Fields_On_Create`, `Case_Update_Milestone_On_First_Response`) are superseded and are removed in the cleanup step described in [SETUP.md](./SETUP.md#removing-the-legacy-formula-fields-and-flows).
 
 ---
 
-## 10. LWC dashboard component
+## 7. Apex
+
+| Class | Purpose |
+|---|---|
+| `SLTRuleService` | SLT engine; loads configuration once per transaction; `evaluate()` (exact) and `estimate()` (calendar time, for ranking) |
+| `SLTDashboardController` | `getActiveCases(ownerId, queueId)` — scope resolution, two-stage ranking, `DashboardResult` / `CaseRow` |
+| `SLTCaseTriggerHandler` | Severity stamping for `SLTCaseTrigger` |
+| `SLTTestFactory` | Test-only in-memory configuration |
+
+Test classes: `SLTRuleServiceTest`, `SLTDashboardControllerTest`, `SLTCaseTriggerHandlerTest`, `SLTEmailMessageTriggerTest`. Tests inject configuration and never depend on which metadata records exist in the org.
+
+---
+
+## 8. LWC dashboard component
 
 **Files:** `force-app/main/default/lwc/sfSltDashboard/`
 
-### Component property
-
-| Property | Type | Default | Purpose |
-|---|---|---|---|
-| `ownerId` | String | blank | Admin override — pins the dashboard to one user's cases. Set in Lightning App Builder. Overrides scope permissions. |
-
-### Scope label
-
-The header shows a subtitle indicating the active scope: **"Viewing: Your Team"**, **"Viewing: All Cases"**, etc. This updates automatically when the component loads.
-
-### Column picker
-
-The **Columns ▾** button opens a dropdown with a checkbox for each of the 12 columns. Changes apply immediately and reset to all-visible on page refresh. To change which columns are visible by default, edit `DEFAULT_COLUMNS` in `sfSltDashboard.js`:
-
-```js
-const DEFAULT_COLUMNS = [
-    { key: 'caseNumber', label: 'Case #',  visible: true  },
-    { key: 'severity',   label: 'Severity', visible: false }, // hidden by default
-    // ...
-];
-```
-
-### Sorting
-
-Click any column header to sort ascending (▲). Click again to reverse (▼). Null values sort to the bottom. RAG Status sorts Red → Amber → Green (not alphabetically).
-
-### Progress bar
-
-Fill width = `(hours elapsed / SLT target) × 100%`, capped at 100%. The bar uses a fixed CSS gradient spanning the full track — green at the left edge, orange at 55%, red at 100%. As the bar fills, it progressively reveals the gradient.
-
-### Things you can change
-
-| What | Where | What to edit |
-|---|---|---|
-| Refresh interval | `sfSltDashboard.js` | `REFRESH_INTERVAL_MS` |
-| RAG badge labels | `sfSltDashboard.js` | `RAG_LABEL` object |
-| Default column visibility | `sfSltDashboard.js` | `DEFAULT_COLUMNS` array |
-| Progress bar gradient | `sfSltDashboard.css` | `.progress-fill` `background` property |
-
----
-
-## 11. Permission sets
-
-### Base access
-
-**`SLT Dashboard Access` (`SLTDashboardAccess`)** — required for every user. Grants:
-- Read access to all 8 SLT custom fields on Case
-- Apex class access to `SLTDashboardController`
-
-### Scope permission sets
-
-Four scope permission sets control what data each user sees. Assign exactly one per user alongside the base access set.
-
-| Permission Set Name | Label | Scope |
-|---|---|---|
-| `SLTScope_All` | SLT Dashboard - Director Scope | All cases in the org |
-| `SLTScope_Org` | SLT Dashboard - Manager Scope | All cases in the role subtree beneath the user |
-| `SLTScope_Team` | SLT Dashboard - Technical Lead Scope | Cases for users in direct child roles |
-| `SLTScope_Own` | SLT Dashboard - Agent Scope | Only the user's own cases |
-
-Each scope permission set contains one **Custom Permission**:
-
-| Custom Permission | Checked by the Apex controller |
+| Property | Purpose |
 |---|---|
-| `SLT_Scope_All` | `FeatureManagement.checkPermission('SLT_Scope_All')` |
-| `SLT_Scope_Org` | `FeatureManagement.checkPermission('SLT_Scope_Org')` |
-| `SLT_Scope_Team` | `FeatureManagement.checkPermission('SLT_Scope_Team')` |
-| `SLT_Scope_Own` | fallback — no explicit check needed |
+| `ownerId` | Pin the dashboard to one user's cases |
+| `queueId` | Include a queue's open cases |
 
-For full assignment instructions, see **[SETUP.md](./SETUP.md)**.
+- **Refresh / countdown** — server refresh every 30 s; calendar-time rows tick every 1 s. Business-hours rows update on refresh only (their clock may be paused).
+- **Sorting** — click a header; RAG sorts Red → Amber → Green; nulls last.
+- **Progress bar** — elapsed ÷ window, capped at 100%, fixed green → orange → red gradient.
+- **Truncation note** — "Showing the most urgent X of Y open cases" when rows are cut.
+
+| What | Where |
+|---|---|
+| Refresh interval | `REFRESH_INTERVAL_MS` in `sfSltDashboard.js` |
+| Countdown interval | `TICK_INTERVAL_MS` |
+| RAG badge labels | `RAG_LABEL`, `NO_RULE_LABEL` |
+| Default column visibility | `DEFAULT_COLUMNS` |
+| Progress bar gradient | `.progress-fill` in `sfSltDashboard.css` |
 
 ---
 
-## 12. Deploy and setup
+## 9. Permission sets
 
-For complete step-by-step instructions — including scope assignment, role hierarchy setup, and cache clearing — see **[SETUP.md](./SETUP.md)**.
+| Permission Set | Purpose |
+|---|---|
+| `SLTDashboardAccess` | **Required for every user.** Read access to SLT Case fields + Apex class access |
+| `SLTScope_All` / `SLTScope_Org` / `SLTScope_Team` / `SLTScope_Own` | One per user — Director / Manager / Technical Lead / Agent scope |
 
-Quick reference:
+Admins editing SLT configuration need **Customize Application**. Assignment instructions: [SETUP.md](./SETUP.md).
+
+---
+
+## 10. Limits
+
+- Up to **10,000** open cases in scope are ranked per refresh (oldest first by created date). Beyond that, newer cases are not ranked and the dashboard shows "… of 10000+ open cases".
+- **Max Rows is effectively capped at 1,500**: only the 1,500 most urgent candidates get the exact (business-hours) calculation.
+- Measured worst case (every rule on business hours, 10,000 cases): ≈ 4 s of the 10 s Apex CPU limit.
+
+Details: [DOCUMENTATION.md §11](./DOCUMENTATION.md#11-limits-and-performance).
+
+---
+
+## 11. Deploy and setup
+
+Step-by-step instructions: **[SETUP.md](./SETUP.md)**.
 
 ```bash
 # Deploy everything
 sf project deploy start --source-dir force-app --target-org YOUR_ORG_ALIAS
 
-# Deploy LWC only (clear browser cache after this — see SETUP.md)
-sf project deploy start --source-dir force-app/main/default/lwc/sfSltDashboard --target-org YOUR_ORG_ALIAS
-
-# Deploy Apex controller only
-sf project deploy start --source-dir force-app/main/default/classes/SLTDashboardController.cls --target-org YOUR_ORG_ALIAS
-
-# Deploy scope permissions and permission sets only
-sf project deploy start \
-  --source-dir force-app/main/default/customPermissions \
-  --source-dir force-app/main/default/permissionsets/SLTScope_All.permissionset-meta.xml \
-  --source-dir force-app/main/default/permissionsets/SLTScope_Org.permissionset-meta.xml \
-  --source-dir force-app/main/default/permissionsets/SLTScope_Team.permissionset-meta.xml \
-  --source-dir force-app/main/default/permissionsets/SLTScope_Own.permissionset-meta.xml \
-  --target-org YOUR_ORG_ALIAS
-
-# Run tests
+# Run the SLT tests
 sf apex run test \
-  --class-names SLTDashboardControllerTest \
-  --class-names SLTEmailMessageTriggerTest \
-  --target-org YOUR_ORG_ALIAS --wait 10 --result-format human
+  --class-names SLTRuleServiceTest --class-names SLTDashboardControllerTest \
+  --class-names SLTCaseTriggerHandlerTest --class-names SLTEmailMessageTriggerTest \
+  --target-org YOUR_ORG_ALIAS --wait 20 --code-coverage --result-format human
 ```
 
 ---
 
-## 13. Configuration reference
+## 12. Configuration reference
 
-| What to change | File | What to look for |
-|---|---|---|
-| S1 first response target | `objects/Case/fields/SLT_Target_Hours__c.field-meta.xml` | `0.5` (first block) |
-| S2 first response target | `objects/Case/fields/SLT_Target_Hours__c.field-meta.xml` | `2` (first block) |
-| S3 first response target | `objects/Case/fields/SLT_Target_Hours__c.field-meta.xml` | `24` (first block) |
-| S1 update target | `objects/Case/fields/SLT_Target_Hours__c.field-meta.xml` | `4` (second block) |
-| S2 update target | `objects/Case/fields/SLT_Target_Hours__c.field-meta.xml` | `24` (second block) |
-| S3 update target | `objects/Case/fields/SLT_Target_Hours__c.field-meta.xml` | `36` (second block) |
-| Red threshold (hours) | `objects/Case/fields/SLT_RAG_Status__c.field-meta.xml` | `1` |
-| Amber threshold (% remaining) | `objects/Case/fields/SLT_RAG_Status__c.field-meta.xml` | `0.4` |
-| Dashboard refresh rate | `lwc/sfSltDashboard/sfSltDashboard.js` | `REFRESH_INTERVAL_MS` |
-| Progress bar gradient | `lwc/sfSltDashboard/sfSltDashboard.css` | `.progress-fill` gradient |
-| RAG badge label text | `lwc/sfSltDashboard/sfSltDashboard.js` | `RAG_LABEL` object |
-| Default column visibility | `lwc/sfSltDashboard/sfSltDashboard.js` | `DEFAULT_COLUMNS` array |
-| Priority → Severity mapping | `flows/Case_Set_SLT_Fields_On_Create.flow-meta.xml` | `<rules>` inside `<decisions>` |
-| Pin dashboard to one user | Lightning App Builder → component properties | `ownerId` |
-
-All file paths are relative to `force-app/main/default/`.
+| What to change | Where |
+|---|---|
+| SLT target for a severity and phase | Setup → Custom Metadata Types → SLT Rule → record → Target Minutes |
+| Business hours for a rule | SLT Rule → Use Business Hours / Business Hours Name |
+| Severity pill colour / label / order | SLT Rule → Severity Color / Severity Label / Sort Order |
+| Priority → Severity mapping | SLT Priority Map records |
+| Red threshold (minutes) | SLT Setting → Default → Red Threshold Minutes |
+| Amber threshold (% remaining) | SLT Setting → Default → Amber Threshold Percent |
+| Use Case Milestones on/off | SLT Setting → Default → Use Case Milestones |
+| Rows returned | SLT Setting → Default → Max Rows (≤ 1,500) |
+| Scope label text / translations | Setup → Custom Labels → `SLT_Scope_Label_*` |
+| Pin dashboard to a user / add a queue | Lightning App Builder → component properties |
+| Refresh rate, badge text, default columns, gradient | `sfSltDashboard.js` / `.css` (code) |
 
 ---
 
-## 14. Edge cases
+## 13. Edge cases
 
-### Cases created before deployment
-
-Cases that existed before deployment will not have `Severity__c` set, causing them to show as Red immediately. Use the backfill script in [SETUP.md](./SETUP.md) to fix this.
-
-### Cases where Priority is blank
-
-The flow maps blank Priority to S3. The case still gets an SLT target and shows correctly.
-
-### Cases without a CaseMilestone record
-
-If the org does not use Salesforce Entitlement Milestones, Target Date and Completion Date show `—`, and Violated is derived from `Hours_Remaining__c`. All other columns work normally.
-
-### Cases with inbound emails only
-
-If no outbound email has been sent, the trigger never fires. The case stays in Phase 1, counting from creation time against the first response SLT.
-
-### Dashboard shows an error after deploying a new version
-
-Salesforce caches the compiled LWC JavaScript in the browser. After deploying a new version of the component, clear the browser cache before reloading. See [SETUP.md](./SETUP.md) for the full cache-clearing steps.
-
-### User with multiple scope permission sets
-
-If a user is accidentally assigned more than one scope set, the highest scope wins. The Apex checks in order: `SLT_Scope_All → SLT_Scope_Org → SLT_Scope_Team → fallback`. Audit assignments via Setup → Permission Sets → Manage Assignments.
-
-### Existing RAG_Status__c field
-
-This org has a separate `RAG_Status__c` field managed by an unrelated AI Case Triage system. This dashboard uses `SLT_RAG_Status__c` — a completely separate formula field. The two coexist independently and do not interact.
+- **Cases created before deployment** — Severity is resolved live from Priority; run the backfill in SETUP.md to store it.
+- **Blank or unmapped Priority** — uses the default priority mapping (S3 by default).
+- **Severity with no rule** — grey "No SLT rule" badge, excluded from RAG counts, listed last.
+- **No Case Milestones** — SLT rules apply to every case; Target Date and Completion Date show `—`.
+- **Inbound-only cases** — stay in the First Response phase.
+- **Dashboard error after deploying a new version** — clear the browser cache (see SETUP.md).
+- **Multiple scope sets** — highest scope wins.
 
 ---
 
-## 15. Custom Metadata Created (Summary)
+## 14. Custom Metadata Created (Summary)
 
-Everything below is custom-built for this project — none of it exists in a Salesforce org by default. Standard objects/fields used (Case, EmailMessage, CaseMilestone, Priority, Status, OwnerId, CreatedDate) are **not** listed here.
+| Kind | Items |
+|---|---|
+| Custom Metadata Types (3) | `SLT_Rule__mdt` (6 records), `SLT_Priority_Map__mdt` (3), `SLT_Setting__mdt` (1: Default) |
+| Case fields | `Severity__c`, `First_Response_Date__c`, `Last_Update_Date__c`, `Milestone_Type__c` (legacy); legacy formula fields `SLT_Target_Hours__c`, `Hours_Elapsed__c`, `Hours_Remaining__c`, `SLT_RAG_Status__c` (to be removed) |
+| Apex classes (8) | `SLTRuleService`, `SLTDashboardController`, `SLTCaseTriggerHandler`, `SLTTestFactory` + 4 test classes |
+| Apex triggers (2) | `SLTCaseTrigger`, `SLTEmailMessageTrigger` |
+| Custom Labels (5) | `SLT_Scope_Label_Filtered`, `_All`, `_Org`, `_Team`, `_Own` |
+| Custom Permissions (4) | `SLT_Scope_All`, `SLT_Scope_Org`, `SLT_Scope_Team`, `SLT_Scope_Own` |
+| Permission Sets (5) | `SLTDashboardAccess`, `SLTScope_All`, `SLTScope_Org`, `SLTScope_Team`, `SLTScope_Own` |
+| LWC (1) | `sfSltDashboard` |
+| Legacy Flows (2, to be removed) | `Case_Set_SLT_Fields_On_Create`, `Case_Update_Milestone_On_First_Response` |
 
-### Custom fields on Case (8)
-
-| Field API Name | Type | Purpose |
-|---|---|---|
-| `Severity__c` | Picklist (S1/S2/S3) | Set by flow from `Priority` on case creation |
-| `Milestone_Type__c` | Picklist (First Response/Update/Resolution) | Tracks current SLT phase |
-| `First_Response_Date__c` | DateTime | Stamped on first outbound email |
-| `Last_Update_Date__c` | DateTime | Stamped on every outbound email |
-| `SLT_Target_Hours__c` | Formula (Number) | Target hours for current phase |
-| `Hours_Elapsed__c` | Formula (Number) | Hours since current phase started |
-| `Hours_Remaining__c` | Formula (Number) | Target minus elapsed |
-| `SLT_RAG_Status__c` | Formula (Text) | Red/Amber/Green |
-
-### Custom Permissions (4)
-
-`SLT_Scope_All`, `SLT_Scope_Org`, `SLT_Scope_Team`, `SLT_Scope_Own`
-
-### Permission Sets (5)
-
-`SLTDashboardAccess` (base access), `SLTScope_All`, `SLTScope_Org`, `SLTScope_Team`, `SLTScope_Own`
-
-### Apex (3)
-
-`SLTDashboardController.cls`, `SLTDashboardControllerTest.cls`, `SLTEmailMessageTriggerTest.cls`
-
-### Apex Trigger (1)
-
-`SLTEmailMessageTrigger` (after insert on EmailMessage)
-
-### Flows (2)
-
-`Case_Set_SLT_Fields_On_Create` (Before Save, Create), `Case_Update_Milestone_On_First_Response` (Before Save, Update)
-
-### Lightning Web Component (1)
-
-`sfSltDashboard`
-
-### Not custom (for clarity)
-
-`CaseMilestone` and its fields (`TargetDate`, `CompletionDate`, `IsViolated`, `MilestoneType.Name`) are standard Salesforce Entitlement Milestone objects/fields, used but not created by this project.
+`CaseMilestone` and `BusinessHours` are standard Salesforce objects, used but not created by this project.
