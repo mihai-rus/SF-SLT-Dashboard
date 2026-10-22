@@ -166,10 +166,25 @@ private class SLTRuleServiceTest {
     }
 
     @isTest
-    static void businessHoursBulkEvaluationStaysWithinCpuLimit() {
+    static void estimateSkipsBusinessHoursAndIsLowerBound() {
+        SLTRuleService.setConfig(businessHoursRules(null), null, null);
+        SLTRuleService.CaseInput i = input('S1', null, NOW.addHours(-20), null, null);
+
+        SLTRuleService.Result exact    = SLTRuleService.evaluate(i, NOW);
+        SLTRuleService.Result estimate = SLTRuleService.estimate(i, NOW);
+
+        System.assertEquals(true,  exact.usesBusinessHours);
+        System.assertEquals(false, estimate.usesBusinessHours);
+        System.assertEquals(NOW.addHours(-20).addMinutes(120), estimate.deadline);
+        System.assert(estimate.remainingMinutes <= exact.remainingMinutes,
+            'Calendar estimate must never report more time left than business hours');
+    }
+
+    @isTest
+    static void businessHoursExactEvaluationAtCapStaysWithinCpuLimit() {
         SLTRuleService.setConfig(businessHoursRules(null), null, null);
         List<SLTRuleService.CaseInput> inputs = new List<SLTRuleService.CaseInput>();
-        for (Integer i = 0; i < SLTDashboardController.QUERY_ROW_CAP; i++) {
+        for (Integer i = 0; i < SLTDashboardController.EXACT_ROW_CAP; i++) {
             inputs.add(input('S1', null, NOW.addMinutes(-Math.mod(i * 37, 20000)), null, null));
         }
 
@@ -181,10 +196,10 @@ private class SLTRuleServiceTest {
         Integer cpuUsed = Limits.getCpuTime() - cpuBefore;
         Test.stopTest();
 
-        System.debug(LoggingLevel.WARN, 'SLT_CPU_BENCH business-hours evaluations='
+        System.debug(LoggingLevel.WARN, 'SLT_CPU_BENCH exact business-hours evaluations='
             + inputs.size() + ' cpuMs=' + cpuUsed);
         System.assert(cpuUsed < Limits.getLimitCpuTime() / 2,
-            'Evaluating the full query cap must use under half the CPU limit, used ' + cpuUsed + ' ms');
+            'Exact evaluation of EXACT_ROW_CAP cases must use under half the CPU limit, used ' + cpuUsed + ' ms');
     }
 
     // ── Milestone mode ─────────────────────────────────────────────────────────

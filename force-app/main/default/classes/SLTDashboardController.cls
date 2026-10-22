@@ -1,17 +1,24 @@
 public with sharing class SLTDashboardController {
 
-    // Upper bound on open cases evaluated per request. Rows are sorted by urgency
-    // in Apex and then cut to SLT_Setting__mdt.Max_Rows__c, so this must stay
-    // above Max_Rows__c. Sized for the worst case: every rule on business hours
-    // costs ~2.5 ms CPU per case (BusinessHours.add + diff) against the 10 s limit.
-    @TestVisible
-    private static final Integer QUERY_ROW_CAP = 1500;
+    // Two-stage ranking keeps CPU bounded while never dropping an urgent case
+    // because of its age:
+    //   1. Up to QUERY_ROW_CAP open cases are ranked by a calendar-time estimate
+    //      (~0.1 ms CPU per case, no BusinessHours calls).
+    //   2. The top Max_Rows__c + CANDIDATE_MARGIN candidates (never more than
+    //      EXACT_ROW_CAP) get the exact evaluation, which costs ~2.5 ms CPU per
+    //      case when business hours apply, and are re-sorted and cut to Max_Rows__c.
+    // Not final so tests can shrink them.
+    @TestVisible private static Integer QUERY_ROW_CAP    = 10000;
+    @TestVisible private static Integer EXACT_ROW_CAP    = 1500;
+    @TestVisible private static Integer CANDIDATE_MARGIN = 250;
 
     // ── Public result types ────────────────────────────────────────────────────
 
     public class DashboardResult {
         @AuraEnabled public List<CaseRow> cases;
         @AuraEnabled public String        scopeLabel;
+        @AuraEnabled public Integer       totalCaseCount;   // open cases ranked in stage 1
+        @AuraEnabled public Boolean       isTruncated;      // query hit QUERY_ROW_CAP: more open cases exist
     }
 
     public class CaseRow {
@@ -49,7 +56,7 @@ public with sharing class SLTDashboardController {
         if (ownerIds != null && String.isNotBlank(queueId)) {
             ownerIds.add(toQueueId(queueId));
         }
-        result.cases = queryCases(ownerIds);
+        queryCases(ownerIds, result);
         return result;
     }
 
@@ -172,21 +179,29 @@ public with sharing class SLTDashboardController {
     // ── Query helpers ──────────────────────────────────────────────────────────
 
     // ownerIds == null → all open cases
-    private static List<CaseRow> queryCases(Set<Id> ownerIds) {
-        List<Case> cases = ownerIds == null
-            ? [
-                SELECT Id, CaseNumber, Subject, OwnerId, Owner.Name, Status,
-                       Severity__c, Priority, CreatedDate,
+    private static void queryCases(Set<Id> ownerIds, DashboardResult result) {
+        DateTime now = DateTime.now();
+
+        // Stage 1 — rank every open case in scope by the cheap estimate
+        Map<Id, SLTRuleService.MilestoneInfo> windows = SLTRuleService.useCaseMilestones()
+            ? loadMilestoneWindows(ownerIds)
+            : new Map<Id, SLTRuleService.MilestoneInfo>();
+        List<Candidate> ranked = new List<Candidate>();
+        if (ownerIds == null) {
+            for (List<Case> chunk : [
+                SELECT Id, Severity__c, Priority, CreatedDate,
                        First_Response_Date__c, Last_Update_Date__c
                 FROM   Case
                 WHERE  IsClosed = false
                 WITH   USER_MODE
                 ORDER BY CreatedDate ASC
                 LIMIT  :QUERY_ROW_CAP
-            ]
-            : [
-                SELECT Id, CaseNumber, Subject, OwnerId, Owner.Name, Status,
-                       Severity__c, Priority, CreatedDate,
+            ]) {
+                rank(chunk, windows, now, ranked);
+            }
+        } else {
+            for (List<Case> chunk : [
+                SELECT Id, Severity__c, Priority, CreatedDate,
                        First_Response_Date__c, Last_Update_Date__c
                 FROM   Case
                 WHERE  IsClosed = false
@@ -194,19 +209,113 @@ public with sharing class SLTDashboardController {
                 WITH   USER_MODE
                 ORDER BY CreatedDate ASC
                 LIMIT  :QUERY_ROW_CAP
-            ];
+            ]) {
+                rank(chunk, windows, now, ranked);
+            }
+        }
+        result.totalCaseCount = ranked.size();
+        result.isTruncated    = ranked.size() >= QUERY_ROW_CAP;
 
+        // Stage 2 — exact evaluation of the top candidates only
+        Integer maxRows = SLTRuleService.maxRows();
+        Integer rowLimit = maxRows == null ? EXACT_ROW_CAP : Math.min(maxRows, EXACT_ROW_CAP);
+        Set<Id> candidateIds = topCandidates(ranked, Math.min(rowLimit + CANDIDATE_MARGIN, EXACT_ROW_CAP));
+
+        List<Case> cases = [
+            SELECT Id, CaseNumber, Subject, OwnerId, Owner.Name, Status,
+                   Severity__c, Priority, CreatedDate,
+                   First_Response_Date__c, Last_Update_Date__c
+            FROM   Case
+            WHERE  Id IN :candidateIds
+            AND    IsClosed = false
+            WITH   USER_MODE
+        ];
         Map<Id, SLTRuleService.MilestoneInfo> milestones = SLTRuleService.useCaseMilestones()
-            ? loadOpenMilestones(new Map<Id, Case>(cases).keySet())
+            ? loadOpenMilestones(candidateIds)
             : new Map<Id, SLTRuleService.MilestoneInfo>();
 
-        return sortAndLimit(buildRows(cases, milestones));
+        result.cases = sortAndLimit(buildRows(cases, milestones, now), rowLimit);
     }
 
-    // Earliest-due open CaseMilestone per case. Queried dynamically so the package
-    // does not depend on Entitlement Management being enabled in the org.
+    private static void rank(List<Case> chunk, Map<Id, SLTRuleService.MilestoneInfo> windows,
+                             DateTime now, List<Candidate> ranked) {
+        for (Case c : chunk) {
+            SLTRuleService.Result r = SLTRuleService.estimate(toInput(c, windows.get(c.Id)), now);
+            ranked.add(new Candidate(c.Id, r.remainingMinutes));
+        }
+    }
+
+    // The `count` most urgent candidates (nulls — no rule — last). Uses a native
+    // Decimal sort to find the cut-off instead of sorting objects, which costs
+    // ~1 s CPU at 10,000 rows versus a few ms.
+    @TestVisible
+    private static Set<Id> topCandidates(List<Candidate> ranked, Integer count) {
+        Set<Id> ids = new Set<Id>();
+        List<Decimal> values = new List<Decimal>();
+        for (Candidate c : ranked) {
+            if (c.remainingMinutes != null) values.add(c.remainingMinutes);
+        }
+        values.sort();
+
+        if (values.size() > count) {
+            Decimal cutoff = values[count - 1];
+            for (Candidate c : ranked) {
+                if (c.remainingMinutes != null && c.remainingMinutes < cutoff) ids.add(c.caseId);
+            }
+            for (Candidate c : ranked) {
+                if (ids.size() >= count) break;
+                if (c.remainingMinutes == cutoff) ids.add(c.caseId);
+            }
+        } else {
+            for (Candidate c : ranked) {
+                if (c.remainingMinutes != null) ids.add(c.caseId);
+            }
+            for (Candidate c : ranked) {
+                if (ids.size() >= count) break;
+                if (c.remainingMinutes == null) ids.add(c.caseId);
+            }
+        }
+        return ids;
+    }
+
+    @TestVisible
+    private class Candidate {
+        final Id      caseId;
+        final Decimal remainingMinutes;
+        @TestVisible
+        Candidate(Id caseId, Decimal remainingMinutes) {
+            this.caseId           = caseId;
+            this.remainingMinutes = remainingMinutes;
+        }
+    }
+
+    // Earliest-due open milestone window (start/target only) per open case in scope,
+    // for stage 1 ranking. Queried dynamically so the package does not depend on
+    // Entitlement Management being enabled in the org.
+    private static Map<Id, SLTRuleService.MilestoneInfo> loadMilestoneWindows(Set<Id> ownerIds) {
+        Map<Id, SLTRuleService.MilestoneInfo> byCase = new Map<Id, SLTRuleService.MilestoneInfo>();
+        if (!hasCaseMilestones()) return byCase;
+
+        String soql = 'SELECT CaseId, StartDate, TargetDate FROM CaseMilestone ' +
+                      'WHERE IsCompleted = false AND TargetDate != null AND Case.IsClosed = false ' +
+                      (ownerIds == null ? '' : 'AND Case.OwnerId IN :ownerIds ') +
+                      'ORDER BY TargetDate ASC LIMIT :rowCap';
+        Map<String, Object> binds = new Map<String, Object>{ 'rowCap' => QUERY_ROW_CAP };
+        if (ownerIds != null) binds.put('ownerIds', ownerIds);
+        for (SObject rec : Database.queryWithBinds(soql, binds, AccessLevel.USER_MODE)) {
+            Id caseId = (Id) rec.get('CaseId');
+            if (byCase.containsKey(caseId)) continue;
+            SLTRuleService.MilestoneInfo m = new SLTRuleService.MilestoneInfo();
+            m.startDate  = (DateTime) rec.get('StartDate');
+            m.targetDate = (DateTime) rec.get('TargetDate');
+            byCase.put(caseId, m);
+        }
+        return byCase;
+    }
+
+    // Earliest-due open CaseMilestone per candidate case, with display fields.
     private static Map<Id, SLTRuleService.MilestoneInfo> loadOpenMilestones(Set<Id> caseIds) {
-        if (caseIds.isEmpty() || !Schema.getGlobalDescribe().containsKey('CaseMilestone')) {
+        if (caseIds.isEmpty() || !hasCaseMilestones()) {
             return new Map<Id, SLTRuleService.MilestoneInfo>();
         }
         return mapMilestones(Database.queryWithBinds(
@@ -217,6 +326,10 @@ public with sharing class SLTDashboardController {
             new Map<String, Object>{ 'caseIds' => caseIds },
             AccessLevel.USER_MODE
         ));
+    }
+
+    private static Boolean hasCaseMilestones() {
+        return Schema.getGlobalDescribe().containsKey('CaseMilestone');
     }
 
     @TestVisible
@@ -239,21 +352,24 @@ public with sharing class SLTDashboardController {
         return byCase;
     }
 
+    private static SLTRuleService.CaseInput toInput(Case c, SLTRuleService.MilestoneInfo m) {
+        SLTRuleService.CaseInput input = new SLTRuleService.CaseInput();
+        input.severity          = c.Severity__c;
+        input.priority          = c.Priority;
+        input.createdDate       = c.CreatedDate;
+        input.firstResponseDate = c.First_Response_Date__c;
+        input.lastUpdateDate    = c.Last_Update_Date__c;
+        input.milestone         = m;
+        return input;
+    }
+
     private static List<CaseRow> buildRows(List<Case> cases,
-                                           Map<Id, SLTRuleService.MilestoneInfo> milestones) {
-        DateTime      now  = DateTime.now();
+                                           Map<Id, SLTRuleService.MilestoneInfo> milestones,
+                                           DateTime now) {
         List<CaseRow> rows = new List<CaseRow>();
         for (Case c : cases) {
             SLTRuleService.MilestoneInfo m = milestones.get(c.Id);
-
-            SLTRuleService.CaseInput input = new SLTRuleService.CaseInput();
-            input.severity          = c.Severity__c;
-            input.priority          = c.Priority;
-            input.createdDate       = c.CreatedDate;
-            input.firstResponseDate = c.First_Response_Date__c;
-            input.lastUpdateDate    = c.Last_Update_Date__c;
-            input.milestone         = m;
-            SLTRuleService.Result r = SLTRuleService.evaluate(input, now);
+            SLTRuleService.Result r = SLTRuleService.evaluate(toInput(c, m), now);
 
             CaseRow row           = new CaseRow();
             row.caseId            = c.Id;
@@ -294,17 +410,15 @@ public with sharing class SLTDashboardController {
     }
 
     // Most urgent first (breached at the top); rows without a rule go last.
-    private static List<CaseRow> sortAndLimit(List<CaseRow> rows) {
+    private static List<CaseRow> sortAndLimit(List<CaseRow> rows, Integer rowLimit) {
         List<RowByUrgency> sortable = new List<RowByUrgency>();
         for (CaseRow row : rows) {
             sortable.add(new RowByUrgency(row));
         }
         sortable.sort();
 
-        Integer maxRows = SLTRuleService.maxRows();
-        Integer size    = maxRows == null ? sortable.size() : Math.min(maxRows, sortable.size());
         List<CaseRow> sorted = new List<CaseRow>();
-        for (Integer i = 0; i < size; i++) {
+        for (Integer i = 0; i < Math.min(rowLimit, sortable.size()); i++) {
             sorted.add(sortable[i].row);
         }
         return sorted;
@@ -315,12 +429,15 @@ public with sharing class SLTDashboardController {
         RowByUrgency(CaseRow row) { this.row = row; }
 
         public Integer compareTo(Object other) {
-            Decimal a = row.timeRemainingMins;
-            Decimal b = ((RowByUrgency) other).row.timeRemainingMins;
-            if (a == b)    return 0;
-            if (a == null) return 1;
-            if (b == null) return -1;
-            return a < b ? -1 : 1;
+            return compareRemaining(row.timeRemainingMins, ((RowByUrgency) other).row.timeRemainingMins);
         }
+    }
+
+    // Ascending remaining minutes, nulls (no rule) last
+    private static Integer compareRemaining(Decimal a, Decimal b) {
+        if (a == b)    return 0;
+        if (a == null) return 1;
+        if (b == null) return -1;
+        return a < b ? -1 : 1;
     }
 }

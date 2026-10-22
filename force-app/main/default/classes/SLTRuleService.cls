@@ -153,6 +153,17 @@ public with sharing class SLTRuleService {
     }
 
     public static Result evaluate(CaseInput input, DateTime now) {
+        return evaluate(input, now, true);
+    }
+
+    // Calendar-time estimate for ranking: identical to evaluate() but never calls
+    // BusinessHours. Business-hours elapsed time never exceeds calendar elapsed
+    // time, so the estimated remaining time is a lower bound on the exact value.
+    public static Result estimate(CaseInput input, DateTime now) {
+        return evaluate(input, now, false);
+    }
+
+    private static Result evaluate(CaseInput input, DateTime now, Boolean allowBusinessHours) {
         Config c = config();
         Result r = new Result();
 
@@ -195,7 +206,7 @@ public with sharing class SLTRuleService {
 
             r.targetMinutes = rule.Target_Minutes__c;
             Long targetMs   = (rule.Target_Minutes__c * MS_PER_MINUTE).longValue();
-            Id   bhId       = rule.Use_Business_Hours__c == true
+            Id   bhId       = allowBusinessHours && rule.Use_Business_Hours__c == true
                 ? businessHoursId(rule.Business_Hours_Name__c)
                 : null;
 

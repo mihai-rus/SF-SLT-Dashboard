@@ -189,6 +189,8 @@ private class SLTDashboardControllerTest {
         Test.stopTest();
 
         System.assertEquals(1, result.cases.size());
+        System.assertEquals(1, result.totalCaseCount);
+        System.assertEquals(false, result.isTruncated);
         SLTDashboardController.CaseRow row = result.cases[0];
 
         System.assertNotEquals(null, row.caseId,    'caseId must be set');
@@ -341,19 +343,24 @@ private class SLTDashboardControllerTest {
         System.assertEquals(false, missing.isViolated);
     }
 
-    @isTest
-    static void fullQueryCapWithBusinessHoursStaysWithinCpuLimit() {
+    private static void useBusinessHoursConfig(Integer maxRows) {
         List<SLT_Rule__mdt> rules = SLTTestFactory.defaultRules();
         for (SLT_Rule__mdt r : rules) {
             r.Use_Business_Hours__c = true;
         }
-        SLTRuleService.setConfig(rules, SLTTestFactory.defaultPriorityMaps(), SLTTestFactory.setting(true, 1000));
+        SLTRuleService.setConfig(rules, SLTTestFactory.defaultPriorityMaps(), SLTTestFactory.setting(true, maxRows));
+    }
+
+    // End to end with as many real cases as one test transaction can insert
+    @isTest
+    static void businessHoursEndToEndStaysWithinCpuLimit() {
+        useBusinessHoursConfig(1000);
         User u = makeUser('sltBulk');
         insert u;
 
         List<Case> cases = new List<Case>();
         List<String> severities = new List<String>{ 'S1', 'S2', 'S3' };
-        for (Integer i = 0; i < SLTDashboardController.QUERY_ROW_CAP; i++) {
+        for (Integer i = 0; i < 1500; i++) {
             cases.add(makeCase('Bulk ' + i, severities[Math.mod(i, 3)], 'First Response', 'New', u.Id));
         }
         insert cases;
@@ -364,11 +371,128 @@ private class SLTDashboardControllerTest {
         Test.stopTest();
 
         System.debug(LoggingLevel.WARN, 'SLT_CPU_BENCH getActiveCases cases='
-            + cases.size() + ' cpuMs=' + cpuUsed);
-        System.assertEquals(1000, result.cases.size(), 'Max_Rows__c caps the returned rows');
-        System.assertEquals(true, result.cases[0].usesBusinessHours);
+            + cases.size() + ' cpuMs=' + cpuUsed + ' heap=' + Limits.getHeapSize());
+        System.assertEquals(1000,  result.cases.size(), 'Max_Rows__c caps the returned rows');
+        System.assertEquals(1500,  result.totalCaseCount);
+        System.assertEquals(false, result.isTruncated);
+        System.assertEquals(true,  result.cases[0].usesBusinessHours);
         System.assert(cpuUsed < Limits.getLimitCpuTime() * 3 / 4,
-            'getActiveCases on the full query cap used ' + cpuUsed + ' ms CPU');
+            'getActiveCases used ' + cpuUsed + ' ms CPU');
+    }
+
+    // Full QUERY_ROW_CAP scale in memory (a test cannot insert 10,000 cases):
+    // stage 1 estimates + ranking, stage 2 exact business-hours evaluation.
+    @isTest
+    static void fullScaleTwoStageRankingStaysWithinCpuLimit() {
+        useBusinessHoursConfig(1000);
+        DateTime now = DateTime.now();
+        Map<Id, SLTRuleService.CaseInput> inputs = new Map<Id, SLTRuleService.CaseInput>();
+        List<String> severities = new List<String>{ 'S1', 'S2', 'S3' };
+        for (Integer i = 0; i < SLTDashboardController.QUERY_ROW_CAP; i++) {
+            SLTRuleService.CaseInput input = new SLTRuleService.CaseInput();
+            input.severity    = severities[Math.mod(i, 3)];
+            input.createdDate = now.addMinutes(-Math.mod(i * 37, 4000));
+            inputs.put(Id.valueOf('500' + String.valueOf(i).leftPad(12, '0')), input);
+        }
+
+        Test.startTest();
+        Integer cpuBefore = Limits.getCpuTime();
+        List<SLTDashboardController.Candidate> ranked = new List<SLTDashboardController.Candidate>();
+        for (Id caseId : inputs.keySet()) {
+            ranked.add(new SLTDashboardController.Candidate(caseId,
+                SLTRuleService.estimate(inputs.get(caseId), now).remainingMinutes));
+        }
+        Integer cpuStage1 = Limits.getCpuTime() - cpuBefore;
+        Set<Id> top = SLTDashboardController.topCandidates(ranked,
+            1000 + SLTDashboardController.CANDIDATE_MARGIN);
+        Integer cpuSort = Limits.getCpuTime() - cpuBefore - cpuStage1;
+        for (Id caseId : top) {
+            SLTRuleService.evaluate(inputs.get(caseId), now);
+        }
+        Integer cpuUsed = Limits.getCpuTime() - cpuBefore;
+        Test.stopTest();
+
+        System.debug(LoggingLevel.WARN, 'SLT_CPU_BENCH two-stage cases=' + inputs.size()
+            + ' candidates=' + top.size() + ' stage1Ms=' + cpuStage1 + ' sortMs=' + cpuSort
+            + ' totalMs=' + cpuUsed + ' heap=' + Limits.getHeapSize());
+        System.assertEquals(1250, top.size());
+        System.assert(cpuUsed < Limits.getLimitCpuTime() * 3 / 4,
+            'Two-stage ranking at full scale used ' + cpuUsed + ' ms CPU');
+    }
+
+    @isTest
+    static void topCandidatesRankMostUrgentFirstAndNullsLast() {
+        Id a = '500000000000001';
+        Id b = '500000000000002';
+        Id c = '500000000000003';
+        Set<Id> top = SLTDashboardController.topCandidates(new List<SLTDashboardController.Candidate>{
+            new SLTDashboardController.Candidate(a, null),
+            new SLTDashboardController.Candidate(b, 500),
+            new SLTDashboardController.Candidate(c, -20)
+        }, 2);
+        System.assertEquals(new Set<Id>{ b, c }, top);
+    }
+
+    @isTest
+    static void topCandidatesHandlesTiesAndFillsWithNulls() {
+        Id a = '500000000000001';
+        Id b = '500000000000002';
+        Id c = '500000000000003';
+        Id d = '500000000000004';
+        List<SLTDashboardController.Candidate> ranked = new List<SLTDashboardController.Candidate>{
+            new SLTDashboardController.Candidate(a, 10),
+            new SLTDashboardController.Candidate(b, 10),
+            new SLTDashboardController.Candidate(c, 5),
+            new SLTDashboardController.Candidate(d, null)
+        };
+        Set<Id> two = SLTDashboardController.topCandidates(ranked, 2);
+        System.assertEquals(2, two.size());
+        System.assert(two.contains(c), 'most urgent always included');
+
+        System.assertEquals(new Set<Id>{ a, b, c, d }, SLTDashboardController.topCandidates(ranked, 4));
+        System.assertEquals(new Set<Id>{ a, b, c }, SLTDashboardController.topCandidates(ranked, 3));
+    }
+
+    @isTest
+    static void newUrgentCaseNotDroppedBehindOlderCases() {
+        SLTRuleService.setConfig(SLTTestFactory.defaultRules(), SLTTestFactory.defaultPriorityMaps(),
+                                 SLTTestFactory.setting(true, 1));
+        SLTDashboardController.CANDIDATE_MARGIN = 0;
+        User u = makeUser('sltNewS1');
+        insert u;
+
+        List<Case> older = new List<Case>();
+        for (Integer i = 0; i < 3; i++) {
+            older.add(makeCase('Old S3 ' + i, 'S3', 'First Response', 'New', u.Id));
+        }
+        insert older;
+        for (Case c : older) {
+            Test.setCreatedDate(c.Id, DateTime.now().addHours(-10));
+        }
+        insert makeCase('New S1', 'S1', 'First Response', 'New', u.Id);
+
+        SLTDashboardController.DashboardResult result = SLTDashboardController.getActiveCases(u.Id, null);
+        System.assertEquals(new List<String>{ 'New S1' }, subjects(result));
+        System.assertEquals(4, result.totalCaseCount);
+        System.assertEquals(false, result.isTruncated);
+    }
+
+    @isTest
+    static void hittingQueryCapSetsTruncatedFlag() {
+        SLTTestFactory.useDefaultConfig();
+        SLTDashboardController.QUERY_ROW_CAP = 2;
+        User u = makeUser('sltTrunc');
+        insert u;
+        insert new List<Case>{
+            makeCase('Case A', 'S1', 'First Response', 'New', u.Id),
+            makeCase('Case B', 'S2', 'First Response', 'New', u.Id),
+            makeCase('Case C', 'S3', 'First Response', 'New', u.Id)
+        };
+
+        SLTDashboardController.DashboardResult result = SLTDashboardController.getActiveCases(u.Id, null);
+        System.assertEquals(true, result.isTruncated);
+        System.assertEquals(2,    result.totalCaseCount);
+        System.assertEquals(2,    result.cases.size());
     }
 
     @isTest
