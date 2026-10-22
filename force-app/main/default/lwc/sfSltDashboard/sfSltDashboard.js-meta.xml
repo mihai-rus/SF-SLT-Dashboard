@@ -15,6 +15,12 @@
                 label="Filter by Owner ID"
                 description="Salesforce User ID to filter cases by owner. Leave blank to show all open cases."
             />
+            <property
+                name="queueId"
+                type="String"
+                label="Include Queue ID"
+                description="Salesforce Queue ID. Open cases owned by this queue are shown in addition to the cases in the user's scope."
+            />
         </targetConfig>
         <targetConfig targets="lightning__RecordPage">
             <objects>
@@ -26,6 +32,12 @@
                 type="String"
                 label="Filter by Owner ID"
                 description="Salesforce User ID to filter cases by owner. Leave blank to show all open cases."
+            />
+            <property
+                name="queueId"
+                type="String"
+                label="Include Queue ID"
+                description="Salesforce Queue ID. Open cases owned by this queue are shown in addition to the cases in the user's scope."
             />
         </targetConfig>
     </targetConfigs>

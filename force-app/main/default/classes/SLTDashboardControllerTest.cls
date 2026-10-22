@@ -41,6 +41,13 @@ private class SLTDashboardControllerTest {
         insert new PermissionSetAssignment(AssigneeId = userId, PermissionSetId = ps.Id);
     }
 
+    // Every dashboard user needs base access; queries run in user mode
+    private static void grantDashboardAccess(List<User> users) {
+        for (User u : users) {
+            assignPermissionSet(u.Id, 'SLTDashboardAccess');
+        }
+    }
+
     // Creates a minimal 2-level role hierarchy: parent → child
     private static List<UserRole> makeTwoLevelRoles() {
         UserRole parent = new UserRole(Name = 'SLT Parent Role', DeveloperName = 'SLT_Parent_Test');
@@ -51,10 +58,19 @@ private class SLTDashboardControllerTest {
         return new List<UserRole>{ parent, child };
     }
 
+    private static List<String> subjects(SLTDashboardController.DashboardResult result) {
+        List<String> out = new List<String>();
+        for (SLTDashboardController.CaseRow row : result.cases) {
+            out.add(row.subject);
+        }
+        return out;
+    }
+
     // ── Override filter tests ──────────────────────────────────────────────────
 
     @isTest
     static void overrideFilterExcludesClosedCases() {
+        SLTTestFactory.useDefaultConfig();
         User u = makeUser('sltAll');
         insert u;
 
@@ -66,11 +82,12 @@ private class SLTDashboardControllerTest {
 
         Test.startTest();
         SLTDashboardController.DashboardResult result =
-            SLTDashboardController.getActiveCases(u.Id);
+            SLTDashboardController.getActiveCases(u.Id, null);
         Test.stopTest();
 
         System.assertNotEquals(null, result);
         System.assertEquals('Filtered View', result.scopeLabel);
+        System.assertEquals(2, result.cases.size(), 'Closed cases must be excluded');
         for (SLTDashboardController.CaseRow row : result.cases) {
             System.assertNotEquals('Closed', row.status,
                 'Closed cases must be excluded');
@@ -79,6 +96,7 @@ private class SLTDashboardControllerTest {
 
     @isTest
     static void overrideFilterIsolatesByOwner() {
+        SLTTestFactory.useDefaultConfig();
         User ownerA = makeUser('sltOwnerA');
         User ownerB = makeUser('sltOwnerB');
         insert new List<User>{ ownerA, ownerB };
@@ -90,39 +108,84 @@ private class SLTDashboardControllerTest {
 
         Test.startTest();
         SLTDashboardController.DashboardResult result =
-            SLTDashboardController.getActiveCases(ownerA.Id);
+            SLTDashboardController.getActiveCases(ownerA.Id, null);
         Test.stopTest();
 
         System.assertEquals('Filtered View', result.scopeLabel);
-        System.assert(result.cases.size() >= 1);
+        System.assertEquals(new List<String>{ 'Owner A Case' }, subjects(result));
     }
 
     @isTest
     static void blankOwnerIdUsesPermissionBasedScope() {
+        SLTTestFactory.useDefaultConfig();
         User u = makeUser('sltBlank');
         insert u;
         insert makeCase('Blank Test', 'S2', 'Update', 'New', u.Id);
 
         Test.startTest();
         SLTDashboardController.DashboardResult result =
-            SLTDashboardController.getActiveCases('');
+            SLTDashboardController.getActiveCases('', '');
         Test.stopTest();
 
         System.assertNotEquals('Filtered View', result.scopeLabel,
             'Blank ownerId should use permission-based scope, not override');
     }
 
+    // ── Queue tests ────────────────────────────────────────────────────────────
+
+    @isTest
+    static void queueIdAddsQueueOwnedCases() {
+        SLTTestFactory.useDefaultConfig();
+        User u = makeUser('sltQueue');
+        Group queue = new Group(Name = 'SLT Test Queue', DeveloperName = 'SLT_Test_Queue', Type = 'Queue');
+        System.runAs(new User(Id = UserInfo.getUserId())) {
+            insert u;
+            insert queue;
+            insert new QueueSObject(QueueId = queue.Id, SobjectType = 'Case');
+        }
+
+        insert new List<Case>{
+            makeCase('User Case',  'S2', 'First Response', 'New',    u.Id),
+            makeCase('Queue Case', 'S1', 'First Response', 'New',    queue.Id),
+            makeCase('Closed Q',   'S1', 'First Response', 'Closed', queue.Id)
+        };
+
+        Test.startTest();
+        SLTDashboardController.DashboardResult withQueue =
+            SLTDashboardController.getActiveCases(u.Id, queue.Id);
+        SLTDashboardController.DashboardResult withoutQueue =
+            SLTDashboardController.getActiveCases(u.Id, null);
+        Test.stopTest();
+
+        System.assertEquals(new List<String>{ 'Queue Case', 'User Case' }, subjects(withQueue));
+        System.assertEquals(new List<String>{ 'User Case' }, subjects(withoutQueue));
+    }
+
+    @isTest
+    static void invalidQueueIdThrows() {
+        SLTTestFactory.useDefaultConfig();
+        for (String bad : new List<String>{ 'not-an-id', UserInfo.getUserId() }) {
+            try {
+                SLTDashboardController.getActiveCases(UserInfo.getUserId(), bad);
+                System.assert(false, 'Expected AuraHandledException for ' + bad);
+            } catch (AuraHandledException e) {
+                System.assert(e.getMessage().contains(bad), e.getMessage());
+            }
+        }
+    }
+
     // ── CaseRow field tests ────────────────────────────────────────────────────
 
     @isTest
     static void caseRowHasAllRequiredFields() {
+        SLTTestFactory.useDefaultConfig();
         User u = makeUser('sltFields');
         insert u;
         insert makeCase('Field Check', 'S2', 'First Response', 'In Progress', u.Id);
 
         Test.startTest();
         SLTDashboardController.DashboardResult result =
-            SLTDashboardController.getActiveCases(u.Id);
+            SLTDashboardController.getActiveCases(u.Id, null);
         Test.stopTest();
 
         System.assertEquals(1, result.cases.size());
@@ -135,43 +198,188 @@ private class SLTDashboardControllerTest {
         System.assertNotEquals(null, row.status,     'status must be set');
         System.assertEquals('S2',             row.severity);
         System.assertEquals('First Response', row.milestoneName);
+        System.assertEquals('S2 label',       row.severityLabel);
+        System.assertEquals('#123456',        row.severityColor);
+        System.assertEquals(1,                row.severitySortOrder);
+        System.assertEquals(2.00,             row.sltTargetHours);
+        System.assertEquals('Green',          row.ragStatus);
+        System.assertEquals('Rule',           row.source);
+        System.assertEquals(false,            row.ruleMissing);
+        System.assertEquals(false,            row.usesBusinessHours);
+        System.assertEquals(false,            row.isViolated);
+        System.assertEquals(null,             row.targetDate, 'no milestone → no target date');
+        System.assertNotEquals(null,          row.deadline);
+        System.assert(row.timeRemainingMins > 119 && row.timeRemainingMins <= 120,
+            'S2 first response window is 120 min: ' + row.timeRemainingMins);
     }
 
     @isTest
-    static void casesOrderedByHoursRemainingAscending() {
+    static void breachedCaseIsRedAndViolated() {
+        SLTTestFactory.useDefaultConfig();
+        User u = makeUser('sltBreach');
+        insert u;
+        Case c = makeCase('Breached', 'S1', 'First Response', 'New', u.Id);
+        insert c;
+        Test.setCreatedDate(c.Id, DateTime.now().addHours(-2));
+
+        SLTDashboardController.CaseRow row =
+            SLTDashboardController.getActiveCases(u.Id, null).cases[0];
+
+        System.assertEquals('Red', row.ragStatus);
+        System.assertEquals(true,  row.isViolated);
+        System.assert(row.hoursRemaining < 0);
+    }
+
+    @isTest
+    static void milestoneNameShowsEnginePhaseWithoutMilestone() {
+        SLTTestFactory.useDefaultConfig();
+        User u = makeUser('sltPhase');
+        insert u;
+        insert new List<Case>{
+            makeCase('FR Case',  'S1', 'First Response', 'New', u.Id),
+            new Case(Subject = 'Upd Case', Severity__c = 'S1', Status = 'New', OwnerId = u.Id,
+                     First_Response_Date__c = DateTime.now(), Last_Update_Date__c = DateTime.now())
+        };
+
+        Map<String, String> phaseBySubject = new Map<String, String>();
+        for (SLTDashboardController.CaseRow row : SLTDashboardController.getActiveCases(u.Id, null).cases) {
+            phaseBySubject.put(row.subject, row.milestoneName);
+        }
+        System.assertEquals('First Response', phaseBySubject.get('FR Case'));
+        System.assertEquals('Update',         phaseBySubject.get('Upd Case'));
+    }
+
+    @isTest
+    static void severityResolvedFromPriorityWhenBlank() {
+        // Map High → S2 so the result can only come from the engine, not the create Flow
+        SLTRuleService.setConfig(SLTTestFactory.defaultRules(),
+            new List<SLT_Priority_Map__mdt>{ SLTTestFactory.priorityMap('High', 'S2', true) },
+            SLTTestFactory.setting(true, 1000));
+        User u = makeUser('sltPrio');
+        insert u;
+        Case c = new Case(Subject = 'Prio', Priority = 'High', Status = 'New', OwnerId = u.Id);
+        insert c;
+        update new Case(Id = c.Id, Severity__c = null);
+
+        SLTDashboardController.CaseRow row =
+            SLTDashboardController.getActiveCases(u.Id, null).cases[0];
+        System.assertEquals('S2', row.severity);
+        System.assertEquals(2.00, row.sltTargetHours);
+    }
+
+    // ── Ordering and limits ────────────────────────────────────────────────────
+
+    @isTest
+    static void casesOrderedMostUrgentFirst() {
+        SLTTestFactory.useDefaultConfig();
         User u = makeUser('sltOrder');
         insert u;
 
+        Case breached = makeCase('Breached S3', 'S3', 'First Response', 'New', u.Id);
         insert new List<Case>{
-            makeCase('Case Alpha', 'S1', 'First Response', 'New', u.Id),
-            makeCase('Case Beta',  'S1', 'First Response', 'New', u.Id),
-            makeCase('Case Gamma', 'S1', 'First Response', 'New', u.Id)
+            makeCase('Case S3', 'S3', 'First Response', 'New', u.Id),
+            makeCase('Case S1', 'S1', 'First Response', 'New', u.Id),
+            makeCase('Case S2', 'S2', 'First Response', 'New', u.Id),
+            breached
         };
+        Test.setCreatedDate(breached.Id, DateTime.now().addDays(-2));
 
         Test.startTest();
         SLTDashboardController.DashboardResult result =
-            SLTDashboardController.getActiveCases(u.Id);
+            SLTDashboardController.getActiveCases(u.Id, null);
         Test.stopTest();
 
-        System.assertEquals(3, result.cases.size());
+        System.assertEquals(
+            new List<String>{ 'Breached S3', 'Case S1', 'Case S2', 'Case S3' },
+            subjects(result));
         Decimal prev = null;
         for (SLTDashboardController.CaseRow row : result.cases) {
-            if (prev != null && row.hoursRemaining != null) {
+            if (prev != null) {
                 System.assert(row.hoursRemaining >= prev,
                     'Cases must be ordered ASC by hoursRemaining');
             }
-            if (row.hoursRemaining != null) prev = row.hoursRemaining;
+            prev = row.hoursRemaining;
         }
     }
 
     @isTest
+    static void maxRowsKeepsMostUrgentCases() {
+        SLTRuleService.setConfig(SLTTestFactory.defaultRules(), SLTTestFactory.defaultPriorityMaps(),
+                                 SLTTestFactory.setting(true, 2));
+        User u = makeUser('sltMax');
+        insert u;
+        insert new List<Case>{
+            makeCase('Case S3', 'S3', 'First Response', 'New', u.Id),
+            makeCase('Case S1', 'S1', 'First Response', 'New', u.Id),
+            makeCase('Case S2', 'S2', 'First Response', 'New', u.Id)
+        };
+
+        System.assertEquals(new List<String>{ 'Case S1', 'Case S2' },
+            subjects(SLTDashboardController.getActiveCases(u.Id, null)));
+    }
+
+    @isTest
+    static void rowsWithoutRuleSortLastWithNoRag() {
+        List<SLT_Rule__mdt> rules = new List<SLT_Rule__mdt>();
+        for (SLT_Rule__mdt r : SLTTestFactory.defaultRules()) {
+            if (r.Severity__c != 'S1') rules.add(r);
+        }
+        SLTRuleService.setConfig(rules, SLTTestFactory.defaultPriorityMaps(), SLTTestFactory.setting(true, 1000));
+        User u = makeUser('sltNoRule');
+        insert u;
+        insert new List<Case>{
+            makeCase('No Rule S1', 'S1', 'First Response', 'New', u.Id),
+            makeCase('Case S3',    'S3', 'First Response', 'New', u.Id)
+        };
+
+        SLTDashboardController.DashboardResult result = SLTDashboardController.getActiveCases(u.Id, null);
+        System.assertEquals(new List<String>{ 'Case S3', 'No Rule S1' }, subjects(result));
+        SLTDashboardController.CaseRow missing = result.cases[1];
+        System.assertEquals(true,  missing.ruleMissing);
+        System.assertEquals(null,  missing.ragStatus);
+        System.assertEquals(null,  missing.timeRemainingMins);
+        System.assertEquals(false, missing.isViolated);
+    }
+
+    @isTest
+    static void fullQueryCapWithBusinessHoursStaysWithinCpuLimit() {
+        List<SLT_Rule__mdt> rules = SLTTestFactory.defaultRules();
+        for (SLT_Rule__mdt r : rules) {
+            r.Use_Business_Hours__c = true;
+        }
+        SLTRuleService.setConfig(rules, SLTTestFactory.defaultPriorityMaps(), SLTTestFactory.setting(true, 1000));
+        User u = makeUser('sltBulk');
+        insert u;
+
+        List<Case> cases = new List<Case>();
+        List<String> severities = new List<String>{ 'S1', 'S2', 'S3' };
+        for (Integer i = 0; i < SLTDashboardController.QUERY_ROW_CAP; i++) {
+            cases.add(makeCase('Bulk ' + i, severities[Math.mod(i, 3)], 'First Response', 'New', u.Id));
+        }
+        insert cases;
+
+        Test.startTest();
+        SLTDashboardController.DashboardResult result = SLTDashboardController.getActiveCases(u.Id, null);
+        Integer cpuUsed = Limits.getCpuTime();
+        Test.stopTest();
+
+        System.debug(LoggingLevel.WARN, 'SLT_CPU_BENCH getActiveCases cases='
+            + cases.size() + ' cpuMs=' + cpuUsed);
+        System.assertEquals(1000, result.cases.size(), 'Max_Rows__c caps the returned rows');
+        System.assertEquals(true, result.cases[0].usesBusinessHours);
+        System.assert(cpuUsed < Limits.getLimitCpuTime() * 3 / 4,
+            'getActiveCases on the full query cap used ' + cpuUsed + ' ms CPU');
+    }
+
+    @isTest
     static void noActiveCasesReturnsEmptyList() {
+        SLTTestFactory.useDefaultConfig();
         User u = makeUser('sltEmpty');
         insert u;
 
         Test.startTest();
         SLTDashboardController.DashboardResult result =
-            SLTDashboardController.getActiveCases(u.Id);
+            SLTDashboardController.getActiveCases(u.Id, null);
         Test.stopTest();
 
         System.assertNotEquals(null, result);
@@ -179,43 +387,79 @@ private class SLTDashboardControllerTest {
     }
 
     @isTest
-    static void allMilestoneTypesAccepted() {
-        User u = makeUser('sltMilestone');
+    static void milestoneModeOffSkipsMilestones() {
+        SLTRuleService.setConfig(SLTTestFactory.defaultRules(), SLTTestFactory.defaultPriorityMaps(),
+                                 SLTTestFactory.setting(false, 1000));
+        User u = makeUser('sltMsOff');
         insert u;
+        insert makeCase('Rule Only', 'S1', 'First Response', 'New', u.Id);
 
-        insert new List<Case>{
-            makeCase('FR Case',  'S1', 'First Response', 'New', u.Id),
-            makeCase('Upd Case', 'S2', 'Update',         'New', u.Id),
-            makeCase('Res Case', 'S3', 'Resolution',     'New', u.Id)
+        SLTDashboardController.CaseRow row =
+            SLTDashboardController.getActiveCases(u.Id, null).cases[0];
+        System.assertEquals('Rule', row.source);
+    }
+
+    // ── Milestone mapping ──────────────────────────────────────────────────────
+
+    // CaseMilestone cannot be inserted without an Entitlement Process, so build
+    // in-memory records via JSON (keeps the test free of a static CaseMilestone reference).
+    private static SObject fakeMilestone(Id caseId, String name, DateTime startDate, DateTime targetDate) {
+        Map<String, Object> rec = new Map<String, Object>{
+            'attributes'     => new Map<String, Object>{ 'type' => 'CaseMilestone' },
+            'CaseId'         => caseId,
+            'StartDate'      => startDate,
+            'TargetDate'     => targetDate,
+            'CompletionDate' => null,
+            'IsCompleted'    => false,
+            'IsViolated'     => false,
+            'MilestoneType'  => new Map<String, Object>{
+                'attributes' => new Map<String, Object>{ 'type' => 'MilestoneType' },
+                'Name'       => name
+            }
         };
+        return (SObject) JSON.deserialize(JSON.serialize(rec), Type.forName('Schema.CaseMilestone'));
+    }
 
-        Test.startTest();
-        SLTDashboardController.DashboardResult result =
-            SLTDashboardController.getActiveCases(u.Id);
-        Test.stopTest();
+    @isTest
+    static void mapMilestonesKeepsEarliestPerCase() {
+        if (!Schema.getGlobalDescribe().containsKey('CaseMilestone')) return;
+        Id caseA = '500000000000001';
+        Id caseB = '500000000000002';
+        DateTime now = DateTime.now();
 
-        System.assertEquals(3, result.cases.size());
-        Set<String> milestones = new Set<String>();
-        for (SLTDashboardController.CaseRow row : result.cases) {
-            milestones.add(row.milestoneName);
-        }
-        System.assert(milestones.contains('First Response'));
-        System.assert(milestones.contains('Update'));
-        System.assert(milestones.contains('Resolution'));
+        Map<Id, SLTRuleService.MilestoneInfo> byCase = SLTDashboardController.mapMilestones(
+            new List<SObject>{
+                fakeMilestone(caseA, 'First Response', now.addHours(-1), now.addHours(1)),
+                fakeMilestone(caseA, 'Resolution',     now.addHours(-1), now.addHours(9)),
+                fakeMilestone(caseB, 'Update',         now.addHours(-2), now.addHours(2))
+            });
+
+        System.assertEquals(2, byCase.size());
+        SLTRuleService.MilestoneInfo a = byCase.get(caseA);
+        System.assertEquals('First Response', a.name);
+        System.assertEquals(now.addHours(1),  a.targetDate);
+        System.assertEquals(now.addHours(-1), a.startDate);
+        System.assertEquals(false, a.isCompleted);
+        System.assertEquals(false, a.isViolated);
+        System.assertEquals('Update', byCase.get(caseB).name);
     }
 
     // ── Permission-based scope tests ───────────────────────────────────────────
 
     @isTest
     static void noScopePermissionDefaultsToOwnCases() {
+        SLTTestFactory.useDefaultConfig();
         User u = makeUser('sltNoScope');
-        insert u;
+        System.runAs(new User(Id = UserInfo.getUserId())) {
+            insert u;
+            grantDashboardAccess(new List<User>{ u });
+        }
         insert makeCase('Own Case', 'S2', 'First Response', 'New', u.Id);
 
         SLTDashboardController.DashboardResult result;
         Test.startTest();
         System.runAs(u) {
-            result = SLTDashboardController.getActiveCases(null);
+            result = SLTDashboardController.getActiveCases(null, null);
         }
         Test.stopTest();
 
@@ -225,6 +469,7 @@ private class SLTDashboardControllerTest {
 
     @isTest
     static void scopeOwnShowsOnlyUsersCases() {
+        SLTTestFactory.useDefaultConfig();
         List<UserRole> roles;
         User agent1;
         User agent2;
@@ -233,6 +478,7 @@ private class SLTDashboardControllerTest {
             agent1 = makeUserWithRole('sltAgt1', roles[1].Id);
             agent2 = makeUserWithRole('sltAgt2', roles[1].Id);
             insert new List<User>{ agent1, agent2 };
+            grantDashboardAccess(new List<User>{ agent1 });
             assignPermissionSet(agent1.Id, 'SLTScope_Own');
         }
 
@@ -244,7 +490,7 @@ private class SLTDashboardControllerTest {
         SLTDashboardController.DashboardResult result;
         Test.startTest();
         System.runAs(agent1) {
-            result = SLTDashboardController.getActiveCases(null);
+            result = SLTDashboardController.getActiveCases(null, null);
         }
         Test.stopTest();
 
@@ -255,6 +501,7 @@ private class SLTDashboardControllerTest {
 
     @isTest
     static void scopeTeamShowsDirectSubroleUsers() {
+        SLTTestFactory.useDefaultConfig();
         List<UserRole> roles;
         User tl;
         User agent1;
@@ -265,6 +512,7 @@ private class SLTDashboardControllerTest {
             agent1 = makeUserWithRole('sltAgt3', roles[1].Id);
             agent2 = makeUserWithRole('sltAgt4', roles[1].Id);
             insert new List<User>{ tl, agent1, agent2 };
+            grantDashboardAccess(new List<User>{ tl });
             assignPermissionSet(tl.Id, 'SLTScope_Team');
         }
 
@@ -277,7 +525,7 @@ private class SLTDashboardControllerTest {
         SLTDashboardController.DashboardResult result;
         Test.startTest();
         System.runAs(tl) {
-            result = SLTDashboardController.getActiveCases(null);
+            result = SLTDashboardController.getActiveCases(null, null);
         }
         Test.stopTest();
 
@@ -288,6 +536,7 @@ private class SLTDashboardControllerTest {
 
     @isTest
     static void scopeOrgShowsEntireSubtree() {
+        SLTTestFactory.useDefaultConfig();
         List<UserRole> roles;
         User manager;
         User agent;
@@ -296,6 +545,7 @@ private class SLTDashboardControllerTest {
             manager = makeUserWithRole('sltMgr',  roles[0].Id);
             agent   = makeUserWithRole('sltAgt5', roles[1].Id);
             insert new List<User>{ manager, agent };
+            grantDashboardAccess(new List<User>{ manager });
             assignPermissionSet(manager.Id, 'SLTScope_Org');
         }
 
@@ -307,7 +557,7 @@ private class SLTDashboardControllerTest {
         SLTDashboardController.DashboardResult result;
         Test.startTest();
         System.runAs(manager) {
-            result = SLTDashboardController.getActiveCases(null);
+            result = SLTDashboardController.getActiveCases(null, null);
         }
         Test.stopTest();
 
@@ -318,6 +568,7 @@ private class SLTDashboardControllerTest {
 
     @isTest
     static void scopeAllShowsEveryCase() {
+        SLTTestFactory.useDefaultConfig();
         List<UserRole> roles;
         User director;
         User agent;
@@ -326,6 +577,7 @@ private class SLTDashboardControllerTest {
             director = makeUserWithRole('sltDir',  roles[0].Id);
             agent    = makeUserWithRole('sltAgt6', roles[1].Id);
             insert new List<User>{ director, agent };
+            grantDashboardAccess(new List<User>{ director });
             assignPermissionSet(director.Id, 'SLTScope_All');
         }
 
@@ -337,7 +589,7 @@ private class SLTDashboardControllerTest {
         SLTDashboardController.DashboardResult result;
         Test.startTest();
         System.runAs(director) {
-            result = SLTDashboardController.getActiveCases(null);
+            result = SLTDashboardController.getActiveCases(null, 'ignored-for-all-scope');
         }
         Test.stopTest();
 

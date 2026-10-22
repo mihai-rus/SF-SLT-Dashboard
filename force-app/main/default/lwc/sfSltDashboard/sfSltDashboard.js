@@ -40,6 +40,7 @@ const SORT_PROP = {
 export default class SfSltDashboard extends LightningElement {
 
     @api ownerId = '';
+    @api queueId = '';
 
     @track _cases           = [];
     @track error            = null;
@@ -67,7 +68,7 @@ export default class SfSltDashboard extends LightningElement {
     // ── data ──────────────────────────────────────────────────────────────────
 
     _load() {
-        getActiveCases({ ownerId: this.ownerId || '' })
+        getActiveCases({ ownerId: this.ownerId || '', queueId: this.queueId || '' })
             .then(result => {
                 this._cases    = result.cases.map(c => this._enrich(c));
                 this.scopeLabel = result.scopeLabel;
