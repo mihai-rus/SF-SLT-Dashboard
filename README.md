@@ -297,7 +297,7 @@ sf apex run test \
 | Kind | Items |
 |---|---|
 | Custom Metadata Types (3) | `SLT_Rule__mdt` (6 records), `SLT_Priority_Map__mdt` (3), `SLT_Setting__mdt` (1: Default) |
-| Case fields | `Severity__c`, `First_Response_Date__c`, `Last_Update_Date__c`, `Milestone_Type__c` (legacy); legacy formula fields `SLT_Target_Hours__c`, `Hours_Elapsed__c`, `Hours_Remaining__c`, `SLT_RAG_Status__c` (to be removed) |
+| Case fields | `Severity__c`, `First_Response_Date__c`, `Last_Update_Date__c`; legacy `Milestone_Type__c` and formula fields `SLT_Target_Hours__c`, `Hours_Elapsed__c`, `Hours_Remaining__c`, `SLT_RAG_Status__c` (to be removed) |
 | Apex classes (8) | `SLTRuleService`, `SLTDashboardController`, `SLTCaseTriggerHandler`, `SLTTestFactory` + 4 test classes |
 | Apex triggers (2) | `SLTCaseTrigger`, `SLTEmailMessageTrigger` |
 | Custom Labels (5) | `SLT_Scope_Label_Filtered`, `_All`, `_Org`, `_Team`, `_Own` |

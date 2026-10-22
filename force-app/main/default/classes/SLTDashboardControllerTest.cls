@@ -25,14 +25,12 @@ private class SLTDashboardControllerTest {
         return u;
     }
 
-    private static Case makeCase(String subject, String severity,
-                                 String milestone, String status, Id ownerId) {
+    private static Case makeCase(String subject, String severity, String status, Id ownerId) {
         return new Case(
-            Subject           = subject,
-            Severity__c       = severity,
-            Milestone_Type__c = milestone,
-            Status            = status,
-            OwnerId           = ownerId
+            Subject     = subject,
+            Severity__c = severity,
+            Status      = status,
+            OwnerId     = ownerId
         );
     }
 
@@ -75,9 +73,9 @@ private class SLTDashboardControllerTest {
         insert u;
 
         insert new List<Case>{
-            makeCase('Open S1',   'S1', 'First Response', 'New',    u.Id),
-            makeCase('Open S2',   'S2', 'Update',         'New',    u.Id),
-            makeCase('Closed S1', 'S1', 'First Response', 'Closed', u.Id)
+            makeCase('Open S1', 'S1', 'New',    u.Id),
+            makeCase('Open S2', 'S2', 'New',    u.Id),
+            makeCase('Closed S1', 'S1', 'Closed', u.Id)
         };
 
         Test.startTest();
@@ -102,8 +100,8 @@ private class SLTDashboardControllerTest {
         insert new List<User>{ ownerA, ownerB };
 
         insert new List<Case>{
-            makeCase('Owner A Case', 'S1', 'First Response', 'New', ownerA.Id),
-            makeCase('Owner B Case', 'S3', 'Update',         'New', ownerB.Id)
+            makeCase('Owner A Case', 'S1', 'New', ownerA.Id),
+            makeCase('Owner B Case', 'S3', 'New', ownerB.Id)
         };
 
         Test.startTest();
@@ -120,7 +118,7 @@ private class SLTDashboardControllerTest {
         SLTTestFactory.useDefaultConfig();
         User u = makeUser('sltBlank');
         insert u;
-        insert makeCase('Blank Test', 'S2', 'Update', 'New', u.Id);
+        insert makeCase('Blank Test', 'S2', 'New', u.Id);
 
         Test.startTest();
         SLTDashboardController.DashboardResult result =
@@ -145,9 +143,9 @@ private class SLTDashboardControllerTest {
         }
 
         insert new List<Case>{
-            makeCase('User Case',  'S2', 'First Response', 'New',    u.Id),
-            makeCase('Queue Case', 'S1', 'First Response', 'New',    queue.Id),
-            makeCase('Closed Q',   'S1', 'First Response', 'Closed', queue.Id)
+            makeCase('User Case', 'S2', 'New',    u.Id),
+            makeCase('Queue Case', 'S1', 'New',    queue.Id),
+            makeCase('Closed Q', 'S1', 'Closed', queue.Id)
         };
 
         Test.startTest();
@@ -181,7 +179,7 @@ private class SLTDashboardControllerTest {
         SLTTestFactory.useDefaultConfig();
         User u = makeUser('sltFields');
         insert u;
-        insert makeCase('Field Check', 'S2', 'First Response', 'In Progress', u.Id);
+        insert makeCase('Field Check', 'S2', 'In Progress', u.Id);
 
         Test.startTest();
         SLTDashboardController.DashboardResult result =
@@ -222,7 +220,7 @@ private class SLTDashboardControllerTest {
         SLTTestFactory.useDefaultConfig();
         User u = makeUser('sltBreach');
         insert u;
-        Case c = makeCase('Breached', 'S1', 'First Response', 'New', u.Id);
+        Case c = makeCase('Breached', 'S1', 'New', u.Id);
         insert c;
         Test.setCreatedDate(c.Id, DateTime.now().addHours(-2));
 
@@ -240,7 +238,7 @@ private class SLTDashboardControllerTest {
         User u = makeUser('sltPhase');
         insert u;
         insert new List<Case>{
-            makeCase('FR Case',  'S1', 'First Response', 'New', u.Id),
+            makeCase('FR Case', 'S1', 'New', u.Id),
             new Case(Subject = 'Upd Case', Severity__c = 'S1', Status = 'New', OwnerId = u.Id,
                      First_Response_Date__c = DateTime.now(), Last_Update_Date__c = DateTime.now())
         };
@@ -279,11 +277,11 @@ private class SLTDashboardControllerTest {
         User u = makeUser('sltOrder');
         insert u;
 
-        Case breached = makeCase('Breached S3', 'S3', 'First Response', 'New', u.Id);
+        Case breached = makeCase('Breached S3', 'S3', 'New', u.Id);
         insert new List<Case>{
-            makeCase('Case S3', 'S3', 'First Response', 'New', u.Id),
-            makeCase('Case S1', 'S1', 'First Response', 'New', u.Id),
-            makeCase('Case S2', 'S2', 'First Response', 'New', u.Id),
+            makeCase('Case S3', 'S3', 'New', u.Id),
+            makeCase('Case S1', 'S1', 'New', u.Id),
+            makeCase('Case S2', 'S2', 'New', u.Id),
             breached
         };
         Test.setCreatedDate(breached.Id, DateTime.now().addDays(-2));
@@ -313,9 +311,9 @@ private class SLTDashboardControllerTest {
         User u = makeUser('sltMax');
         insert u;
         insert new List<Case>{
-            makeCase('Case S3', 'S3', 'First Response', 'New', u.Id),
-            makeCase('Case S1', 'S1', 'First Response', 'New', u.Id),
-            makeCase('Case S2', 'S2', 'First Response', 'New', u.Id)
+            makeCase('Case S3', 'S3', 'New', u.Id),
+            makeCase('Case S1', 'S1', 'New', u.Id),
+            makeCase('Case S2', 'S2', 'New', u.Id)
         };
 
         System.assertEquals(new List<String>{ 'Case S1', 'Case S2' },
@@ -332,8 +330,8 @@ private class SLTDashboardControllerTest {
         User u = makeUser('sltNoRule');
         insert u;
         insert new List<Case>{
-            makeCase('No Rule S1', 'S1', 'First Response', 'New', u.Id),
-            makeCase('Case S3',    'S3', 'First Response', 'New', u.Id)
+            makeCase('No Rule S1', 'S1', 'New', u.Id),
+            makeCase('Case S3', 'S3', 'New', u.Id)
         };
 
         SLTDashboardController.DashboardResult result = SLTDashboardController.getActiveCases(u.Id, null);
@@ -363,7 +361,7 @@ private class SLTDashboardControllerTest {
         List<Case> cases = new List<Case>();
         List<String> severities = new List<String>{ 'S1', 'S2', 'S3' };
         for (Integer i = 0; i < 1500; i++) {
-            cases.add(makeCase('Bulk ' + i, severities[Math.mod(i, 3)], 'First Response', 'New', u.Id));
+            cases.add(makeCase('Bulk ' + i, severities[Math.mod(i, 3)], 'New', u.Id));
         }
         insert cases;
 
@@ -465,13 +463,13 @@ private class SLTDashboardControllerTest {
 
         List<Case> older = new List<Case>();
         for (Integer i = 0; i < 3; i++) {
-            older.add(makeCase('Old S3 ' + i, 'S3', 'First Response', 'New', u.Id));
+            older.add(makeCase('Old S3 ' + i, 'S3', 'New', u.Id));
         }
         insert older;
         for (Case c : older) {
             Test.setCreatedDate(c.Id, DateTime.now().addHours(-10));
         }
-        insert makeCase('New S1', 'S1', 'First Response', 'New', u.Id);
+        insert makeCase('New S1', 'S1', 'New', u.Id);
 
         SLTDashboardController.DashboardResult result = SLTDashboardController.getActiveCases(u.Id, null);
         System.assertEquals(new List<String>{ 'New S1' }, subjects(result));
@@ -486,9 +484,9 @@ private class SLTDashboardControllerTest {
         User u = makeUser('sltTrunc');
         insert u;
         insert new List<Case>{
-            makeCase('Case A', 'S1', 'First Response', 'New', u.Id),
-            makeCase('Case B', 'S2', 'First Response', 'New', u.Id),
-            makeCase('Case C', 'S3', 'First Response', 'New', u.Id)
+            makeCase('Case A', 'S1', 'New', u.Id),
+            makeCase('Case B', 'S2', 'New', u.Id),
+            makeCase('Case C', 'S3', 'New', u.Id)
         };
 
         SLTDashboardController.DashboardResult result = SLTDashboardController.getActiveCases(u.Id, null);
@@ -518,7 +516,7 @@ private class SLTDashboardControllerTest {
                                  SLTTestFactory.setting(false, 1000));
         User u = makeUser('sltMsOff');
         insert u;
-        insert makeCase('Rule Only', 'S1', 'First Response', 'New', u.Id);
+        insert makeCase('Rule Only', 'S1', 'New', u.Id);
 
         SLTDashboardController.CaseRow row =
             SLTDashboardController.getActiveCases(u.Id, null).cases[0];
@@ -580,7 +578,7 @@ private class SLTDashboardControllerTest {
             insert u;
             grantDashboardAccess(new List<User>{ u });
         }
-        insert makeCase('Own Case', 'S2', 'First Response', 'New', u.Id);
+        insert makeCase('Own Case', 'S2', 'New', u.Id);
 
         SLTDashboardController.DashboardResult result;
         Test.startTest();
@@ -609,8 +607,8 @@ private class SLTDashboardControllerTest {
         }
 
         insert new List<Case>{
-            makeCase('Agent1 Case', 'S1', 'First Response', 'New', agent1.Id),
-            makeCase('Agent2 Case', 'S2', 'Update',         'New', agent2.Id)
+            makeCase('Agent1 Case', 'S1', 'New', agent1.Id),
+            makeCase('Agent2 Case', 'S2', 'New', agent2.Id)
         };
 
         SLTDashboardController.DashboardResult result;
@@ -643,9 +641,9 @@ private class SLTDashboardControllerTest {
         }
 
         insert new List<Case>{
-            makeCase('TL Case',    'S1', 'First Response', 'New', tl.Id),
-            makeCase('Agent3 Case','S2', 'Update',         'New', agent1.Id),
-            makeCase('Agent4 Case','S3', 'Resolution',     'New', agent2.Id)
+            makeCase('TL Case', 'S1', 'New', tl.Id),
+            makeCase('Agent3 Case', 'S2', 'New', agent1.Id),
+            makeCase('Agent4 Case', 'S3', 'New', agent2.Id)
         };
 
         SLTDashboardController.DashboardResult result;
@@ -676,8 +674,8 @@ private class SLTDashboardControllerTest {
         }
 
         insert new List<Case>{
-            makeCase('Manager Case', 'S1', 'First Response', 'New', manager.Id),
-            makeCase('Agent5 Case',  'S2', 'Update',         'New', agent.Id)
+            makeCase('Manager Case', 'S1', 'New', manager.Id),
+            makeCase('Agent5 Case', 'S2', 'New', agent.Id)
         };
 
         SLTDashboardController.DashboardResult result;
@@ -708,8 +706,8 @@ private class SLTDashboardControllerTest {
         }
 
         insert new List<Case>{
-            makeCase('Director Case', 'S1', 'First Response', 'New', director.Id),
-            makeCase('Agent6 Case',   'S3', 'Update',         'New', agent.Id)
+            makeCase('Director Case', 'S1', 'New', director.Id),
+            makeCase('Agent6 Case', 'S3', 'New', agent.Id)
         };
 
         SLTDashboardController.DashboardResult result;

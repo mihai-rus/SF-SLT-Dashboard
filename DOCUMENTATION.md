@@ -268,8 +268,10 @@ SLT_Dashboard_v1/
 ├── README.md / SETUP.md / DOCUMENTATION.md / DOCUMENTATION_BUSINESS.md
 ├── sfdx-project.json                    # sourceApiVersion 62.0
 ├── manifest/
-│   ├── package.xml                      # empty carrier for the destructive change
-│   └── destructiveChanges.xml           # legacy formula fields + Flows (see SETUP.md)
+│   ├── package.xml                      # empty carrier for the destructive changes
+│   ├── deactivate-flows/                # FlowDefinitions that deactivate the legacy Flows
+│   ├── destructiveChanges.xml           # pass 1: legacy formula fields + Flows (see SETUP.md)
+│   └── destructiveChanges-pass2.xml     # pass 2: Milestone_Type__c
 └── force-app/main/default/
     ├── classes/
     │   ├── SLTRuleService.cls                # SLT engine
@@ -283,11 +285,11 @@ SLT_Dashboard_v1/
     │   └── SLTEmailMessageTrigger.trigger    # EmailMessage after insert
     ├── objects/
     │   ├── SLT_Rule__mdt/ SLT_Priority_Map__mdt/ SLT_Setting__mdt/
-    │   └── Case/fields/                      # Severity__c, Milestone_Type__c, First_Response_Date__c,
-    │                                         # Last_Update_Date__c (+ 4 legacy formula fields)
+    │   └── Case/fields/                      # Severity__c, First_Response_Date__c, Last_Update_Date__c
+    │                                         # (+ legacy Milestone_Type__c and 4 formula fields)
     ├── customMetadata/                       # 6 rules, 3 priority maps, 1 setting
     ├── labels/CustomLabels.labels-meta.xml   # SLT_Scope_Label_*
-    ├── flows/                                # 2 legacy Flows (to be removed)
+    ├── flows/                                # 2 legacy Flows (inactive, to be removed)
     ├── customPermissions/                    # SLT_Scope_All / Org / Team / Own
     ├── permissionsets/                       # SLTDashboardAccess + 4 scope sets
     └── lwc/sfSltDashboard/
@@ -385,7 +387,7 @@ All fields are subscriber-editable; records are not protected.
 | `Severity__c` | Picklist (S1/S2/S3) | Stored severity; set by `SLTCaseTrigger` or manually |
 | `First_Response_Date__c` | DateTime | Stamped on first outbound email |
 | `Last_Update_Date__c` | DateTime | Stamped on every outbound email |
-| `Milestone_Type__c` | Picklist | Legacy phase indicator; no longer used by the dashboard and no longer maintained once the Flows are removed |
+| `Milestone_Type__c` | Picklist | **Legacy** phase indicator — not used by any code; removed by `manifest/destructiveChanges-pass2.xml` |
 | `SLT_Target_Hours__c`, `Hours_Elapsed__c`, `Hours_Remaining__c`, `SLT_RAG_Status__c` | Formula | **Legacy** — not used by any code; removed by `manifest/destructiveChanges.xml` |
 
 ### Apex classes (8)
@@ -410,4 +412,4 @@ All fields are subscriber-editable; records are not protected.
 
 ### Legacy (to be removed)
 
-Flows `Case_Set_SLT_Fields_On_Create` and `Case_Update_Milestone_On_First_Response`, and the four formula fields above — see SETUP.md, "Removing the legacy formula fields and Flows".
+Flows `Case_Set_SLT_Fields_On_Create` and `Case_Update_Milestone_On_First_Response` (deactivated), `Milestone_Type__c` and the four formula fields above — see SETUP.md, "Removing the legacy formula fields and Flows".

@@ -15,37 +15,12 @@
         <editable>false</editable>
     </fieldPermissions>
     <fieldPermissions>
-        <field>Case.Milestone_Type__c</field>
-        <readable>true</readable>
-        <editable>false</editable>
-    </fieldPermissions>
-    <fieldPermissions>
         <field>Case.First_Response_Date__c</field>
         <readable>true</readable>
         <editable>false</editable>
     </fieldPermissions>
     <fieldPermissions>
         <field>Case.Last_Update_Date__c</field>
-        <readable>true</readable>
-        <editable>false</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Case.SLT_Target_Hours__c</field>
-        <readable>true</readable>
-        <editable>false</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Case.Hours_Elapsed__c</field>
-        <readable>true</readable>
-        <editable>false</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Case.Hours_Remaining__c</field>
-        <readable>true</readable>
-        <editable>false</editable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <field>Case.SLT_RAG_Status__c</field>
         <readable>true</readable>
         <editable>false</editable>
     </fieldPermissions>

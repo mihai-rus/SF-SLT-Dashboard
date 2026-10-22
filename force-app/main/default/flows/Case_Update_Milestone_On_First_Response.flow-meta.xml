@@ -4,7 +4,7 @@
     <description>When First_Response_Date__c is set on a Case, switches Milestone_Type__c to Update so the dashboard shows the correct SLT phase.</description>
     <label>Case – Switch Milestone to Update on First Response</label>
     <processType>AutoLaunchedFlow</processType>
-    <status>Active</status>
+    <status>Obsolete</status>
 
     <!-- ── Trigger: Before Save, Update, when First_Response_Date__c just got set ── -->
     <start>

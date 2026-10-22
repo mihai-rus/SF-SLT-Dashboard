@@ -4,7 +4,7 @@
     <description>On Case creation, maps Priority to Severity__c (High→S1, Medium→S2, Low/other→S3) and defaults Milestone_Type__c to First Response. Only runs when Severity__c is not already set so manual overrides are respected.</description>
     <label>Case – Set SLT Fields On Create</label>
     <processType>AutoLaunchedFlow</processType>
-    <status>Active</status>
+    <status>Obsolete</status>
 
     <!-- ── Trigger: Before Save, Create only, Severity not yet set ── -->
     <start>

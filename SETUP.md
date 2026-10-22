@@ -43,7 +43,7 @@ This deploys in one command:
 - Custom Labels for the scope names
 - LWC dashboard component
 - Permission sets (base access + 4 scope sets) and custom permissions
-- The two legacy Flows and legacy formula fields (until removed — see [Removing the legacy formula fields and Flows](#removing-the-legacy-formula-fields-and-flows))
+- The two legacy Flows (inactive), `Milestone_Type__c` and the legacy formula fields (until removed — see [Removing the legacy formula fields and Flows](#removing-the-legacy-formula-fields-and-flows))
 
 ### 4. Run the tests
 
@@ -203,43 +203,52 @@ SLT targets, mappings and thresholds are **not** deployed changes — edit them 
 
 ## Removing the legacy formula fields and Flows
 
-The original version computed SLTs with four Case formula fields and set Severity with two Flows. Nothing uses them any more, but they still exist in orgs that ran the old version (and in this repository until the cleanup is done). `manifest/destructiveChanges.xml` removes:
+The original version computed SLTs with four Case formula fields, set Severity and the phase with two Flows, and tracked the phase in `Milestone_Type__c`. Nothing uses them any more. They are removed in two destructive passes:
 
-| Component | Type |
-|---|---|
-| `Case.SLT_RAG_Status__c`, `Case.Hours_Remaining__c`, `Case.SLT_Target_Hours__c`, `Case.Hours_Elapsed__c` | Formula fields |
-| `Case_Set_SLT_Fields_On_Create`, `Case_Update_Milestone_On_First_Response` | Flows |
+| Pass | Manifest | Components |
+|---|---|---|
+| 1 | `manifest/destructiveChanges.xml` | Formula fields `SLT_RAG_Status__c`, `Hours_Remaining__c`, `SLT_Target_Hours__c`, `Hours_Elapsed__c`; Flows `Case_Set_SLT_Fields_On_Create`, `Case_Update_Milestone_On_First_Response` |
+| 2 | `manifest/destructiveChanges-pass2.xml` | `Milestone_Type__c` (referenced by the Flow versions, so only removable after pass 1) |
 
 **Do this before the first managed-package release** — components are much harder to remove once they have shipped in a managed package.
 
 ### Order of operations
 
-1. **Deploy the new version first** and confirm the dashboard works (`SLTCaseTrigger` must be active — it replaces the Severity Flow).
-2. **Remove references** in source, then deploy:
-   - delete the four `fieldPermissions` entries for the formula fields from `SLTDashboardAccess.permissionset-meta.xml`;
-   - set `<status>Obsolete</status>` in both Flow files (an active Flow cannot be deleted);
-   - remove the formula fields from any page layouts, list views or reports that use them (none in the reference org).
-3. **Validate** the destructive deploy without changing anything:
+1. **Deploy the new version first** and confirm the dashboard works. `SLTCaseTrigger` must be active — it replaces the Severity Flow. `SLTDashboardAccess` in this repository no longer grants the legacy fields.
+2. **Deactivate both Flows.** Deploying a Flow file with `Obsolete` status does not deactivate the running version; set the active version to 0 instead:
+   ```bash
+   sf project deploy start --metadata-dir manifest/deactivate-flows --target-org YOUR_ORG_ALIAS
+   ```
+   From here on `SLTCaseTrigger` alone sets Severity on new cases.
+3. **Check Flow versions.** Flows are deleted per version (`Name-<version>`). The manifest lists version 1; if the org has more versions, add each one:
+   ```bash
+   sf data query --use-tooling-api --target-org YOUR_ORG_ALIAS --query \
+     "SELECT Definition.DeveloperName, VersionNumber, Status FROM Flow WHERE Definition.DeveloperName IN ('Case_Set_SLT_Fields_On_Create','Case_Update_Milestone_On_First_Response')"
+   ```
+   Also remove the legacy fields from any page layouts, list views or reports that use them (none in the reference org).
+4. **Pass 1 — validate, then run:**
    ```bash
    sf project deploy start --manifest manifest/package.xml \
      --post-destructive-changes manifest/destructiveChanges.xml \
      --target-org YOUR_ORG_ALIAS --dry-run
+   # then the same command without --dry-run
    ```
-   The formula fields reference each other (`SLT_RAG_Status__c` → `Hours_Remaining__c` → `SLT_Target_Hours__c`, `Hours_Elapsed__c`). If validation reports a dependency error, run the deletion in two passes: first `SLT_RAG_Status__c` and `Hours_Remaining__c`, then the other two.
-4. **Run it** — the same command without `--dry-run`.
-5. **Delete the source files** (`objects/Case/fields/` for the four fields and both files in `flows/`) and commit, so the next `--source-dir force-app` deploy does not recreate them.
-6. *(Optional)* Erase the fields permanently: **Setup → Object Manager → Case → Fields & Relationships → Deleted Fields → Erase**. Deleted fields are otherwise kept for 15 days and count toward the field limit.
-
-After this, `Milestone_Type__c` is no longer maintained by anything; the dashboard shows the engine's phase instead. It can be removed in a later cleanup.
-
----
+5. **Pass 2 — validate, then run:**
+   ```bash
+   sf project deploy start --manifest manifest/package.xml \
+     --post-destructive-changes manifest/destructiveChanges-pass2.xml \
+     --target-org YOUR_ORG_ALIAS --dry-run
+   # then the same command without --dry-run
+   ```
+6. **Delete the source files** — the five field files under `objects/Case/fields/` and both files in `flows/` — and commit, so the next `--source-dir force-app` deploy does not recreate them.
+7. *(Optional)* Erase the fields permanently: **Setup → Object Manager → Case → Fields & Relationships → Deleted Fields → Erase**. Deleted fields are otherwise kept for 15 days and count toward the field limit.
 
 ## Appendix — Custom Metadata Created (Summary)
 
 | Kind | Items |
 |---|---|
 | Custom Metadata Types | `SLT_Rule__mdt` (6 records), `SLT_Priority_Map__mdt` (3), `SLT_Setting__mdt` (1) — all fields subscriber-editable |
-| Case fields | `Severity__c`, `First_Response_Date__c`, `Last_Update_Date__c`, `Milestone_Type__c` (legacy); 4 legacy formula fields (to be removed) |
+| Case fields | `Severity__c`, `First_Response_Date__c`, `Last_Update_Date__c`; legacy `Milestone_Type__c` and 4 formula fields (to be removed) |
 | Apex classes | `SLTRuleService`, `SLTDashboardController`, `SLTCaseTriggerHandler`, `SLTTestFactory`, `SLTRuleServiceTest`, `SLTDashboardControllerTest`, `SLTCaseTriggerHandlerTest`, `SLTEmailMessageTriggerTest` |
 | Apex triggers | `SLTCaseTrigger` (Case, before insert), `SLTEmailMessageTrigger` (EmailMessage, after insert) |
 | Custom Labels | `SLT_Scope_Label_Filtered`, `SLT_Scope_Label_All`, `SLT_Scope_Label_Org`, `SLT_Scope_Label_Team`, `SLT_Scope_Label_Own` |

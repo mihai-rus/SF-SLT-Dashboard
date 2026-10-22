@@ -19,3 +19,6 @@ force-app/main/default/quickActions/LogACall.quickAction-meta.xml
 force-app/main/default/quickActions/New*.quickAction-meta.xml
 force-app/main/default/quickActions/SendEmail.quickAction-meta.xml
 force-app/main/default/quickActions/Task.*
+
+# Local AI prompt file — not part of the project
+CURSOR_PROMPT_configurable_rules.md
