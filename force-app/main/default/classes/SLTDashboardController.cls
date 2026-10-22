@@ -19,6 +19,8 @@ public with sharing class SLTDashboardController {
         @AuraEnabled public String        scopeLabel;
         @AuraEnabled public Integer       totalCaseCount;   // open cases ranked in stage 1
         @AuraEnabled public Boolean       isTruncated;      // query hit QUERY_ROW_CAP: more open cases exist
+        @AuraEnabled public Decimal       redThresholdMinutes;   // for client-side RAG between refreshes
+        @AuraEnabled public Decimal       amberThresholdPercent;
     }
 
     public class CaseRow {
@@ -57,6 +59,8 @@ public with sharing class SLTDashboardController {
             ownerIds.add(toQueueId(queueId));
         }
         queryCases(ownerIds, result);
+        result.redThresholdMinutes   = SLTRuleService.redThresholdMinutes();
+        result.amberThresholdPercent = SLTRuleService.amberThresholdPercent();
         return result;
     }
 

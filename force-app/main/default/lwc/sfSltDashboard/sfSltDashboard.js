@@ -2,9 +2,13 @@ import { LightningElement, api, track } from 'lwc';
 import getActiveCases from '@salesforce/apex/SLTDashboardController.getActiveCases';
 
 const REFRESH_INTERVAL_MS = 30_000;
+const TICK_INTERVAL_MS    = 1_000;
 
 const RAG_LABEL = { Red: 'Critical', Amber: 'At risk', Green: 'On track' };
 const RAG_ORDER = { Red: 0, Amber: 1, Green: 2 };
+const NO_RULE_LABEL = 'No SLT rule';
+
+const SOURCE_LABEL = { Rule: 'Rule', CaseMilestone: 'Milestone' };
 
 const DEFAULT_COLUMNS = [
     { key: 'caseNumber',     label: 'Case #',         visible: true },
@@ -19,6 +23,7 @@ const DEFAULT_COLUMNS = [
     { key: 'isViolated',     label: 'Violated',        visible: true },
     { key: 'completionDate', label: 'Completion Date', visible: true },
     { key: 'ragStatus',      label: 'RAG Status',      visible: true },
+    { key: 'source',         label: 'Source',          visible: false },
 ];
 
 // Maps column key → enriched case property used for sorting
@@ -35,7 +40,44 @@ const SORT_PROP = {
     isViolated:     'isViolated',
     completionDate: 'completionDate',
     ragStatus:      'ragStatus',
+    source:         'sourceLabel',
 };
+
+// ── Pure helpers ──────────────────────────────────────────────────────────────
+
+// Same rules as SLTRuleService: breached or under the Red threshold → Red,
+// under Amber % of the window → Amber, otherwise Green.
+function ragFor(remainingMins, windowMins, redThresholdMins, amberPercent) {
+    if (remainingMins <= 0) return 'Red';
+    if (remainingMins < redThresholdMins) return 'Red';
+    if (windowMins > 0 && remainingMins < windowMins * amberPercent / 100) return 'Amber';
+    return 'Green';
+}
+
+// Inline pill style from a configured hex colour. Text in the colour itself on a
+// light tint when that is readable (WCAG AA against white); otherwise a solid
+// background with black or white text, whichever contrasts more.
+function severityPillStyle(hex) {
+    if (!/^#[0-9a-fA-F]{6}$/.test(hex ?? '')) return null;
+    const [r, g, b] = [1, 3, 5]
+        .map(i => parseInt(hex.substring(i, i + 2), 16) / 255)
+        .map(v => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    if (1.05 / (luminance + 0.05) >= 4.5) {
+        return `background-color:${hex}1A;color:${hex}`;
+    }
+    return `background-color:${hex};color:${luminance > 0.179 ? '#080707' : '#ffffff'}`;
+}
+
+function fmtMins(mins) {
+    const total = Math.round(mins);
+    const sign  = total < 0 ? '-' : '';
+    const abs   = Math.abs(total);
+    const h     = Math.floor(abs / 60);
+    const m     = abs % 60;
+    if (h > 0) return sign + (m > 0 ? `${h}h ${m}m` : `${h}h`);
+    return sign + `${m}m`;
+}
 
 export default class SfSltDashboard extends LightningElement {
 
@@ -51,18 +93,26 @@ export default class SfSltDashboard extends LightningElement {
     @track sortColumn       = 'timeRemaining';
     @track sortDirection    = 'asc';
     @track scopeLabel       = '';
+    @track totalCaseCount   = 0;
+    @track isTruncated      = false;
 
-    _timer = null;
+    _rows              = [];   // raw server rows
+    _redThresholdMins  = 0;
+    _amberPercent      = 0;
+    _timer             = null;
+    _tickTimer         = null;
 
     // ── lifecycle ─────────────────────────────────────────────────────────────
 
     connectedCallback() {
         this._load();
-        this._timer = setInterval(() => this._load(), REFRESH_INTERVAL_MS);
+        this._timer     = setInterval(() => this._load(), REFRESH_INTERVAL_MS);
+        this._tickTimer = setInterval(() => this._tick(), TICK_INTERVAL_MS);
     }
 
     disconnectedCallback() {
         clearInterval(this._timer);
+        clearInterval(this._tickTimer);
     }
 
     // ── data ──────────────────────────────────────────────────────────────────
@@ -70,9 +120,14 @@ export default class SfSltDashboard extends LightningElement {
     _load() {
         getActiveCases({ ownerId: this.ownerId || '', queueId: this.queueId || '' })
             .then(result => {
-                this._cases    = result.cases.map(c => this._enrich(c));
-                this.scopeLabel = result.scopeLabel;
-                this.error     = null;
+                this._rows             = result.cases;
+                this._redThresholdMins = result.redThresholdMinutes   ?? 0;
+                this._amberPercent     = result.amberThresholdPercent ?? 0;
+                this.scopeLabel        = result.scopeLabel;
+                this.totalCaseCount    = result.totalCaseCount ?? result.cases.length;
+                this.isTruncated       = result.isTruncated === true;
+                this._cases            = this._rows.map(c => this._enrich(c, Date.now()));
+                this.error             = null;
             })
             .catch(err => {
                 this.error = err?.body?.message ?? String(err);
@@ -82,16 +137,49 @@ export default class SfSltDashboard extends LightningElement {
             });
     }
 
-    _enrich(c) {
-        const rag           = c.ragStatus         ?? 'Green';
-        const remainingMins = c.timeRemainingMins ?? 0;
-        const target        = c.sltTargetHours    ?? 0;
-        const elapsed       = c.hoursElapsed      ?? 0;
-        const isBreached    = c.isViolated || remainingMins <= 0;
+    // Calendar-time rows count down every second from their deadline. Business-hours
+    // rows (clock paused outside working hours) and rows without a rule keep their
+    // server values until the next refresh. Re-renders only when something visible changes.
+    _tick() {
+        if (!this._rows.some(c => this._isLive(c))) return;
+        const now  = Date.now();
+        const next = this._rows.map(c => this._enrich(c, now));
+        const changed = next.some((row, i) => row.displayKey !== this._cases[i]?.displayKey);
+        if (changed) {
+            this._cases = next;
+        }
+    }
 
-        const pct = target > 0
-            ? Math.min(Math.round((elapsed / target) * 100), 100)
-            : (isBreached ? 100 : 0);
+    _isLive(c) {
+        return !c.ruleMissing && !c.usesBusinessHours && c.deadline != null;
+    }
+
+    _enrich(c, now) {
+        const ruleMissing = c.ruleMissing === true;
+        const targetMins  = c.sltTargetHours != null ? c.sltTargetHours * 60 : null;
+        let remainingMins = c.timeRemainingMins;
+        let elapsedMins   = c.hoursElapsed != null ? c.hoursElapsed * 60 : null;
+        let rag           = c.ragStatus ?? null;
+        let isViolated    = c.isViolated === true;
+
+        if (this._isLive(c)) {
+            remainingMins = (new Date(c.deadline).getTime() - now) / 60000;
+            elapsedMins   = targetMins != null ? targetMins - remainingMins : elapsedMins;
+            rag           = ragFor(remainingMins, targetMins, this._redThresholdMins, this._amberPercent);
+            isViolated    = isViolated || remainingMins <= 0;
+        }
+
+        const isBreached = !ruleMissing && (isViolated || (remainingMins != null && remainingMins <= 0));
+        const pct = ruleMissing
+            ? 0
+            : targetMins > 0
+                ? Math.max(0, Math.min(Math.round((elapsedMins / targetMins) * 100), 100))
+                : (isBreached ? 100 : 0);
+
+        const ragLabel    = ruleMissing ? NO_RULE_LABEL : (RAG_LABEL[rag] ?? RAG_LABEL.Green);
+        const ragClass    = ruleMissing ? 'rag-none' : `rag-${(rag ?? 'Green').toLowerCase()}`;
+        const timeDisplay = remainingMins != null ? fmtMins(remainingMins) : '—';
+        const pillStyle   = severityPillStyle(c.severityColor);
 
         return {
             Id:                    c.caseId,
@@ -100,36 +188,31 @@ export default class SfSltDashboard extends LightningElement {
             ownerName:             c.ownerName,
             status:                c.status,
             severity:              c.severity,
+            severityLabel:         c.severityLabel,
             milestoneName:         c.milestoneName,
             targetDate:            c.targetDate,
             timeRemainingMins:     remainingMins,
-            isViolated:            c.isViolated,
+            isViolated:            isViolated,
             completionDate:        c.completionDate,
-            ragStatus:             rag,
+            ragStatus:             ruleMissing ? null : rag,
+            sourceLabel:           SOURCE_LABEL[c.source] ?? c.source,
             recordUrl:             `/lightning/r/Case/${c.caseId}/view`,
             targetDateDisplay:     this._fmtDate(c.targetDate),
             completionDateDisplay: this._fmtDate(c.completionDate),
-            timeDisplay:           this._fmtMins(remainingMins),
+            timeDisplay:           timeDisplay,
             timeClass:             isBreached ? 'time-value time-breached' : 'time-value',
             progressPct:           pct,
             progressStyle:         `width:${pct}%`,
-            ragLabel:              RAG_LABEL[rag] ?? 'On track',
-            ragBadgeClass:         `rag-badge rag-${rag.toLowerCase()}`,
-            severityClass:         `sev-pill sev-${(c.severity ?? '').toLowerCase()}`,
-            isViolatedClass:       c.isViolated ? 'violated-badge violated' : 'violated-badge ok',
-            isViolatedLabel:       c.isViolated ? 'Yes' : 'No',
+            ragLabel:              ragLabel,
+            ragBadgeClass:         `rag-badge ${ragClass}`,
+            severityClass:         pillStyle ? 'sev-pill' : `sev-pill sev-${(c.severity ?? '').toLowerCase()}`,
+            severityStyle:         pillStyle ?? '',
+            isViolatedClass:       isViolated ? 'violated-badge violated' : 'violated-badge ok',
+            isViolatedLabel:       isViolated ? 'Yes' : 'No',
             ariaLinkLabel:         'Open case ' + c.caseNumber,
-            ariaRagLabel:          'RAG status: ' + (RAG_LABEL[rag] ?? 'On track')
+            ariaRagLabel:          'RAG status: ' + ragLabel,
+            displayKey:            `${timeDisplay}|${rag}|${pct}|${isViolated}`
         };
-    }
-
-    _fmtMins(mins) {
-        const sign = mins < 0 ? '-' : '';
-        const abs  = Math.abs(mins);
-        const h    = Math.floor(abs / 60);
-        const m    = Math.round(abs % 60);
-        if (h > 0) return sign + (m > 0 ? `${h}h ${m}m` : `${h}h`);
-        return sign + `${m}m`;
     }
 
     _fmtDate(isoStr) {
@@ -137,6 +220,19 @@ export default class SfSltDashboard extends LightningElement {
         return new Date(isoStr).toLocaleDateString(undefined, {
             year: 'numeric', month: 'short', day: 'numeric'
         });
+    }
+
+    // ── getters — header ──────────────────────────────────────────────────────
+
+    get truncationNote() {
+        const shown = this._cases.length;
+        if (this.isTruncated) {
+            return `Showing the most urgent ${shown} of ${this.totalCaseCount}+ open cases`;
+        }
+        if (this.totalCaseCount > shown) {
+            return `Showing the most urgent ${shown} of ${this.totalCaseCount} open cases`;
+        }
+        return '';
     }
 
     // ── getters — summary cards ───────────────────────────────────────────────
@@ -201,6 +297,7 @@ export default class SfSltDashboard extends LightningElement {
     get showIsViolated()     { return this._colVisible('isViolated'); }
     get showCompletionDate() { return this._colVisible('completionDate'); }
     get showRagStatus()      { return this._colVisible('ragStatus'); }
+    get showSource()         { return this._colVisible('source'); }
 
     // ── getters — sortable header classes ─────────────────────────────────────
 
@@ -221,6 +318,7 @@ export default class SfSltDashboard extends LightningElement {
     get thIsViolated()     { return this._thClass('isViolated'); }
     get thCompletionDate() { return this._thClass('completionDate'); }
     get thRagStatus()      { return this._thClass('ragStatus'); }
+    get thSource()         { return this._thClass('source'); }
 
     // ── getters — filter button classes ───────────────────────────────────────
 

@@ -191,6 +191,8 @@ private class SLTDashboardControllerTest {
         System.assertEquals(1, result.cases.size());
         System.assertEquals(1, result.totalCaseCount);
         System.assertEquals(false, result.isTruncated);
+        System.assertEquals(60, result.redThresholdMinutes);
+        System.assertEquals(40, result.amberThresholdPercent);
         SLTDashboardController.CaseRow row = result.cases[0];
 
         System.assertNotEquals(null, row.caseId,    'caseId must be set');

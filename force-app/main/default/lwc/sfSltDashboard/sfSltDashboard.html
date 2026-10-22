@@ -8,6 +8,9 @@
                 <template lwc:if={scopeLabel}>
                     <span class="scope-label">Viewing: {scopeLabel}</span>
                 </template>
+                <template lwc:if={truncationNote}>
+                    <span class="scope-label" role="status">{truncationNote}</span>
+                </template>
             </div>
             <span class="refresh-note" aria-live="polite">Auto-refreshes every 30 s</span>
         </div>
@@ -99,6 +102,7 @@
                                 <th lwc:if={showIsViolated}     scope="col" class={thIsViolated}     data-sort="isViolated"     onclick={handleSortClick}>Violated</th>
                                 <th lwc:if={showCompletionDate} scope="col" class={thCompletionDate} data-sort="completionDate" onclick={handleSortClick}>Completion Date</th>
                                 <th lwc:if={showRagStatus}      scope="col" class={thRagStatus}      data-sort="ragStatus"      onclick={handleSortClick}>RAG Status</th>
+                                <th lwc:if={showSource}         scope="col" class={thSource}         data-sort="source"         onclick={handleSortClick}>Source</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -111,7 +115,7 @@
                                     <td lwc:if={showOwnerName}>{c.ownerName}</td>
                                     <td lwc:if={showStatus}>{c.status}</td>
                                     <td lwc:if={showSeverity}>
-                                        <span class={c.severityClass}>{c.severity}</span>
+                                        <span class={c.severityClass} style={c.severityStyle} title={c.severityLabel}>{c.severity}</span>
                                     </td>
                                     <td lwc:if={showMilestoneName}>{c.milestoneName}</td>
                                     <td lwc:if={showTargetDate}>{c.targetDateDisplay}</td>
@@ -138,6 +142,7 @@
                                             {c.ragLabel}
                                         </span>
                                     </td>
+                                    <td lwc:if={showSource}>{c.sourceLabel}</td>
                                 </tr>
                             </template>
                         </tbody>
