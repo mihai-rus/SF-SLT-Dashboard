@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>SLT Priority Map</label>
+    <pluralLabel>SLT Priority Maps</pluralLabel>
+    <description>Maps Case Priority values to SLT severities. The record marked Is Default is used when Priority is blank or unmapped.</description>
+    <visibility>Public</visibility>
+</CustomObject>

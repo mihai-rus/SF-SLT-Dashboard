@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Active__c</fullName>
+    <description>Only active rules are used by the SLT Dashboard.</description>
+    <externalId>false</externalId>
+    <fieldManageability>SubscriberControlled</fieldManageability>
+    <inlineHelpText>Only active rules are used by the SLT Dashboard.</inlineHelpText>
+    <label>Active</label>
+    <defaultValue>true</defaultValue>
+    <type>Checkbox</type>
+</CustomField>

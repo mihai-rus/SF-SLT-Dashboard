@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Is_Default__c</fullName>
+    <description>Use this mapping when Priority is blank or has no mapping. Mark exactly one record.</description>
+    <externalId>false</externalId>
+    <fieldManageability>SubscriberControlled</fieldManageability>
+    <inlineHelpText>Use this mapping when Priority is blank or has no mapping. Mark exactly one record.</inlineHelpText>
+    <label>Is Default</label>
+    <defaultValue>false</defaultValue>
+    <type>Checkbox</type>
+</CustomField>

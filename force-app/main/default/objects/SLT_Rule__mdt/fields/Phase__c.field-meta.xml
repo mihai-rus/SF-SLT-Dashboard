@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Phase__c</fullName>
+    <description>Which SLT clock this rule governs.</description>
+    <externalId>false</externalId>
+    <fieldManageability>SubscriberControlled</fieldManageability>
+    <inlineHelpText>Which SLT clock this rule governs.</inlineHelpText>
+    <label>Phase</label>
+    <required>false</required>
+    <type>Picklist</type>
+    <valueSet>
+        <restricted>true</restricted>
+        <valueSetDefinition>
+            <sorted>false</sorted>
+            <value>
+                <fullName>First Response</fullName>
+                <default>false</default>
+                <label>First Response</label>
+            </value>
+            <value>
+                <fullName>Update</fullName>
+                <default>false</default>
+                <label>Update</label>
+            </value>
+        </valueSetDefinition>
+    </valueSet>
+</CustomField>

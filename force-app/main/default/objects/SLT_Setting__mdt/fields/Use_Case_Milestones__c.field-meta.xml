@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Use_Case_Milestones__c</fullName>
+    <description>If checked, an open Case Milestone with a Target Date defines the SLT window instead of the SLT Rule.</description>
+    <externalId>false</externalId>
+    <fieldManageability>SubscriberControlled</fieldManageability>
+    <inlineHelpText>If checked, an open Case Milestone with a Target Date defines the SLT window instead of the SLT Rule.</inlineHelpText>
+    <label>Use Case Milestones</label>
+    <defaultValue>true</defaultValue>
+    <type>Checkbox</type>
+</CustomField>

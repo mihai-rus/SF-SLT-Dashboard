@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Severity_Color__c</fullName>
+    <description>Hex colour for the severity pill text, e.g. #8E0A08. The pill background is a light tint of the same colour.</description>
+    <externalId>false</externalId>
+    <fieldManageability>SubscriberControlled</fieldManageability>
+    <inlineHelpText>Hex colour for the severity pill text, e.g. #8E0A08. The pill background is a light tint of the same colour.</inlineHelpText>
+    <label>Severity Color</label>
+    <length>7</length>
+    <required>false</required>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>
